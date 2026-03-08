@@ -11,6 +11,7 @@ class OciProfileRef:
     name: str
     region: str
     tenancy_ocid: str
+    compartment_ocid: str = ""
     user_ocid: str | None = None
     fingerprint: str | None = None
 

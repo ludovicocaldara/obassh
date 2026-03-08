@@ -1,12 +1,13 @@
 from datetime import datetime
 
-from obassh.domain.enums import NodeType, SessionState
 from obassh.domain.models import (
     BastionSession,
     ConnectionProfile,
     ConnectionRequest,
     ForwardSpec,
+    NodeType,
     ProcessHandle,
+    SessionState,
     TargetNode,
 )
 from obassh.services.orchestrator import ConnectionOrchestrator

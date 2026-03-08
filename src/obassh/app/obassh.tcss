@@ -1,0 +1,17 @@
+#targets-compute-table {
+    padding: 1 2 1 2;
+    border_title_style: bold underline;
+    border: solid;
+}
+
+#targets-db-table {
+    padding: 1 2 1 2;
+    border_title_style: bold underline;
+    border: solid;
+}
+
+#profiles-table {
+    padding: 1 2 1 2;
+    border_title_style: bold underline;
+    border: solid;
+}

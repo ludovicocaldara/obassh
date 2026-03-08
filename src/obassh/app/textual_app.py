@@ -14,8 +14,6 @@ from textual.widgets import (
     Footer,
     Header,
     Label,
-    ListItem,
-    ListView,
     Static,
     TabbedContent,
     TabPane,
@@ -30,6 +28,7 @@ class ObasshApp(App[None]):
 
     TITLE = "obassh"
     SUB_TITLE = "OCI Bastion SSH orchestrator"
+    CSS_PATH = "obassh.tcss"
 
     def __init__(self) -> None:
         super().__init__()
@@ -43,50 +42,39 @@ class ObasshApp(App[None]):
         with Container(id="main-container"):
             with TabbedContent(initial="session"):
                 with TabPane("Session", id="session"):
-                    yield Static("Actions", id="session-actions-title")
-                    yield Button("Connect", id="session-connect-btn", variant="success")
-                    yield Button("Disconnect", id="session-disconnect-btn", variant="error")
-                    yield Static("Last action: none", id="session-action-feedback")
-                    yield Static("Session State", id="session-state-title")
-                    yield Static("Not connected", id="session-state-value")
-                    yield Static("Expires In", id="session-expiry-title")
-                    yield Static("--:--", id="session-expiry-value")
-                    yield Static("Command Preview", id="session-command-title")
-                    yield Static(
-                        "ssh -i <key> -J <bastion> opc@<target>",
-                        id="session-command-value",
-                    )
+                    yield Static("To do", id="session-placeholder")
                 with TabPane("Targets", id="targets"):
-                    yield Static("Compute Nodes", id="targets-compute-title")
                     yield DataTable(id="targets-compute-table")
-                    yield Static("DBSystem DB Nodes", id="targets-db-title")
                     yield DataTable(id="targets-db-table")
+                    yield Static("↑/↓ to navigate, Enter to select", id="targets-hint")
                     yield Static("No target selected", id="targets-selection")
                 with TabPane("Profiles", id="profiles"):
-                    yield Static("Select an OCI profile", id="profiles-title")
-                    yield ListView(id="profiles-list")
-                    yield Static("Hint: ↑/↓ to navigate, Enter to select", id="profiles-hint")
+                    yield DataTable(id="profiles-table")
+                    yield Static("↑/↓ to navigate, Enter to select", id="profiles-hint")
                     yield Static("No profile selected", id="profiles-selection")
         yield Footer()
 
     def on_mount(self) -> None:
         """Load profiles and initialize target tables."""
-        self._setup_target_tables()
+        self._load_target_tables()
         self._load_profiles()
 
-    def _setup_target_tables(self) -> None:
+    def _load_target_tables(self) -> None:
         compute_table = cast(DataTable[str], self.query_one("#targets-compute-table", DataTable))
+        compute_table.border_title = "Compute Nodes"
         compute_table.cursor_type = "row"
         compute_table.add_columns("Name", "State", "DNS Name", "Private IP")
 
         db_table = cast(DataTable[str], self.query_one("#targets-db-table", DataTable))
+        db_table.border_title = "DBSystem DB Nodes"
         db_table.cursor_type = "row"
         db_table.add_columns("DBSystem", "Version", "DBNode", "State", "DNS Name", "Private IP")
 
     def _load_profiles(self) -> None:
-        profiles_list = self.query_one("#profiles-list", ListView)
-        profiles_list.clear()
-        self._profiles = []
+        profiles_table = cast(DataTable[str], self.query_one("#profiles-table", DataTable))
+        profiles_table.border_title = "Select an OCI Profile"
+        profiles_table.cursor_type = "row"
+        profiles_table.add_columns("Profile", "Region", "Tenancy OCID", "Compartment OCID")
 
         try:
             self._profiles = self._inventory.list_oci_profiles()
@@ -95,23 +83,11 @@ class ObasshApp(App[None]):
             return
 
         for profile in self._profiles:
-            label = f"{profile.name} | {profile.region} | tenancy={profile.tenancy_ocid}"
-            profiles_list.append(ListItem(Label(label), name=profile.name))
+            profiles_table.add_row(profile.name, profile.region, profile.tenancy_ocid, profile.compartment_ocid)
             if profile.name == "DEFAULT":
                 self._selected_profile_name = "DEFAULT"
                 self.query_one("#profiles-selection", Static).update("Selected profile: DEFAULT")
                 self._load_targets_for_profile("DEFAULT")
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Update selected hints when user activates a list item."""
-        if event.list_view.id == "profiles-list":
-            selected_profile = event.item.name or "<unknown>"
-            self._selected_profile_name = selected_profile
-            self.query_one("#profiles-selection", Static).update(
-                f"Selected profile: {selected_profile}"
-            )
-            self._load_targets_for_profile(selected_profile)
-            return
 
     def _load_targets_for_profile(self, profile_name: str) -> None:
         compartment_id = self._inventory.default_compartment_id()
@@ -121,7 +97,7 @@ class ObasshApp(App[None]):
         db_table.clear(columns=False)
 
         if not compartment_id:
-            self.query_one("#targets-selection", Static).update("COMPID env var is not set")
+            self.query_one("#targets-selection", Static).update("No compartment set. Use COMPID env var or .oci/oci_cli_rc")
             return
 
         try:
@@ -149,7 +125,17 @@ class ObasshApp(App[None]):
         )
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle row selection for both target tables."""
+        """Handle row selection for profiles and target tables."""
+        if event.data_table.id == "profiles-table":
+            row_values = cast(list[str], event.data_table.get_row(event.row_key))
+            selected_profile = row_values[0] if row_values else "<unknown>"
+            self._selected_profile_name = selected_profile
+            self.query_one("#profiles-selection", Static).update(
+                f"Selected profile: {selected_profile}"
+            )
+            self._load_targets_for_profile(selected_profile)
+            return
+
         row_values = cast(list[str], event.data_table.get_row(event.row_key))
         if event.data_table.id == "targets-compute-table":
             self.query_one("#targets-selection", Static).update(
@@ -161,18 +147,6 @@ class ObasshApp(App[None]):
             self.query_one("#targets-selection", Static).update(
                 f"Selected DB node target: {row_values[2]} ({row_values[5]})"
             )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle placeholder session actions."""
-        if event.button.id == "session-connect-btn":
-            self.query_one("#session-action-feedback", Static).update("Last action: connect")
-            self.query_one("#session-state-value", Static).update("Connecting (placeholder)")
-            return
-
-        if event.button.id == "session-disconnect-btn":
-            self.query_one("#session-action-feedback", Static).update("Last action: disconnect")
-            self.query_one("#session-state-value", Static).update("Disconnected (placeholder)")
-
 
 def run() -> None:
     """Run the Textual application."""

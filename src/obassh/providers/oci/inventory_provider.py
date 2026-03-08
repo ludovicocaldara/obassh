@@ -15,31 +15,66 @@ from obassh.domain.models import OciProfileRef
 class OciInventoryProvider:
     """Read OCI profiles and discover compute / DB System node targets."""
 
-    def __init__(self, config_path: str | None = None) -> None:
+    def __init__(self, config_path: str | None = None, cli_config_path: str | None = None) -> None:
+        # .oci/config is used by OCI SDK to read profiles and create clients
         self._config_path = config_path or str(Path.home() / ".oci" / "config")
+        # .oci/oci_cli_rc is used by OCI CLI to read compartment for a given profile
+        self._cli_config_path = cli_config_path or str(Path.home() / ".oci" / "oci_cli_rc")
 
     def list_oci_profiles(self) -> list[OciProfileRef]:
+        # Source of truth for OCI profile identity data (region/tenancy/user/fingerprint).
         parser = ConfigParser()
         parser.read(self._config_path)
+        # Source of truth for default/profile-specific compartment selection.
+        cli_parser = ConfigParser()
+        cli_parser.read(self._cli_config_path)
 
         profiles: list[OciProfileRef] = []
         profile_names: list[str] = ["DEFAULT", *list(parser.sections())]
+
+        default_compartment = self._compartment_from_cli_rc(cli_parser, "DEFAULT")
+
         for profile_name in profile_names:
             config = cast(dict[str, Any], oci.config.from_file(self._config_path, profile_name))
+            # Compartment priority for each profile:
+            # 1) COMPID environment variable (highest priority)
+            # 2) Profile-specific compartment-id in oci_cli_rc ([PROFILE <name>] or [<name>])
+            # 3) DEFAULT compartment-id in oci_cli_rc
+            compartment_ocid = (
+                os.getenv("COMPID", "")
+                or self._compartment_from_cli_rc(cli_parser, profile_name)
+                or default_compartment
+            )
             profiles.append(
                 OciProfileRef(
                     name=profile_name,
                     region=config.get("region", "unknown"),
                     tenancy_ocid=config.get("tenancy", "unknown"),
+                    compartment_ocid=compartment_ocid,
                     user_ocid=config.get("user"),
                     fingerprint=config.get("fingerprint"),
                 )
             )
+
         return profiles
 
     def default_compartment_id(self) -> str:
-        """Read the currently selected compartment from COMPID env var."""
-        return os.getenv("COMPID", "")
+        """Read compartment from COMPID env var or DEFAULT profile in OCI CLI RC."""
+        env_compartment = os.getenv("COMPID", "")
+        if env_compartment:
+            return env_compartment
+
+        cli_parser = ConfigParser()
+        cli_parser.read(self._cli_config_path)
+        return self._compartment_from_cli_rc(cli_parser, "DEFAULT")
+
+    def _compartment_from_cli_rc(self, parser: ConfigParser, profile_name: str) -> str:
+        for section_name in (profile_name, f"PROFILE {profile_name}"):
+            if parser.has_section(section_name):
+                compartment_id = parser.get(section_name, "compartment-id", fallback="").strip()
+                if compartment_id:
+                    return compartment_id
+        return ""
 
     def list_compute_nodes(self, profile_name: str, compartment_ocid: str) -> list[dict[str, str]]:
         config = cast(dict[str, Any], oci.config.from_file(self._config_path, profile_name))
