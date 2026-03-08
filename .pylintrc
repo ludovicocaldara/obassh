@@ -1,0 +1,16 @@
+[MAIN]
+ignore-patterns=__pycache__
+
+[MESSAGES CONTROL]
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-instance-attributes,
+    unused-argument
+
+[FORMAT]
+max-line-length=100

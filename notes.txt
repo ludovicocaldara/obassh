@@ -1,0 +1,394 @@
+# Main Idea
+
+The app should likely be a **guided SSH/port-forwarding launcher for OCI Bastion sessions** so users don’t have to remember long OCI CLI + SSH commands.
+
+What I think it should do:
+
+1. Let you choose/select OCI context (profile/region/compartment), bastion, target VM, and auth key.
+2. Create or reuse an OCI bastion session (managed SSH or port-forward session), wait until it is ACTIVE, and copy/show expiry.
+3. Generate and run the final SSH command automatically (with all required `-i`, `-N`, `-L`, `ProxyCommand`/bastion parameters).
+4. Support saved connection profiles (e.g., “dev-db”, “prod-app”), one-click connect, and one-click port forwards (DB, app, custom local:remote mapping).
+5. Show live status: creating session, connected, tunnel active, expires in X min, plus easy stop/disconnect and cleanup.
+6. Include safe defaults and validation (port collisions, missing keys, wrong host/OCID), and log the exact command/output for troubleshooting.
+
+So in short: a small Python app that acts as a **connection orchestrator** for OCI Bastion, turning a multi-step/manual CLI process into a repeatable, profile-based, mostly one-click flow for SSH and port forwarding.
+
+# High-level overview
+
+With **OCI Python SDK + `~/.oci/config` profiles + Textualize UI**, I’d suggest a layered, plugin-friendly architecture.
+
+## 1) High-level modules
+- `app/` (Textual UI, screens, widgets, actions)
+- `domain/` (core models + interfaces, no OCI/UI specifics)
+- `services/` (use-cases/orchestration: connect, forward, session lifecycle)
+- `providers/oci/` (OCI SDK adapters: bastion, compute, db systems, identities)
+- `connectors/` (SSH command generation/execution, port forwarding process manager)
+- `plugins/` (future node types like Exadata VM/DB nodes)
+- `storage/` (saved profiles, recent targets, local state)
+
+## 2) Core domain model (extensible)
+Use abstract target concepts so new node types fit cleanly.
+
+- `OciProfileRef`
+  - `name`, `region`, `tenancy_ocid`, optional `compartment_ocid`
+- `BastionRef`
+  - `bastion_ocid`, `display_name`, `target_subnet_id`
+- `TargetNode` (abstract)
+  - `id`, `display_name`, `ip_or_fqdn`, `compartment_ocid`, `node_type`
+  - `resolve_connection_endpoints()`
+- `ComputeInstanceNode(TargetNode)`
+- `ExadataVmClusterNode(TargetNode)` (future)
+- `ExadataDbNode(TargetNode)` (future)
+- `ForwardSpec`
+  - `local_port`, `remote_host`, `remote_port`, `name`
+- `ConnectionProfile`
+  - profile+bastion+target+ssh key+default forwards
+- `BastionSession`
+  - `session_ocid`, `state`, `expires_at`, `ssh_metadata`
+
+## 3) Key interfaces (dependency inversion)
+Define interfaces in `domain/interfaces.py`:
+
+- `CloudInventoryProvider`
+  - `list_profiles()`
+  - `list_bastions(profile, compartment)`
+  - `list_targets(profile, filters) -> list[TargetNode]`
+- `BastionSessionProvider`
+  - `create_managed_ssh_session(...)`
+  - `create_port_forward_session(...)`
+  - `get_session(session_ocid)`
+  - `wait_until_active(session_ocid, timeout)`
+  - `delete_session(session_ocid)`
+- `SshTransport`
+  - `build_command(connection_request)`
+  - `start(command) -> ProcessHandle`
+  - `stop(handle)`
+- `ProfileRepository`
+  - `save/load/list/delete ConnectionProfile`
+
+Then implement OCI-specific adapters in `providers/oci/*`.
+
+## 4) Application services (use-cases)
+- `DiscoveryService`
+  - orchestrates profile->bastion->target discovery
+- `SessionService`
+  - creates/reuses bastion sessions, state polling, expiry tracking
+- `ConnectionService`
+  - builds SSH request + starts/stops process
+- `PortForwardService`
+  - validates local ports, manages multiple tunnels
+- `CommandPreviewService`
+  - renders exact final SSH command for transparency/debugging
+- `AuditLogService`
+  - structured logs + user-visible events
+
+This keeps UI thin and business logic testable.
+
+## 5) Textualize UI structure
+- `MainApp(App)`
+- Screens:
+  - `ProfileSelectScreen`
+  - `TargetDiscoveryScreen`
+  - `ConnectionProfileScreen`
+  - `SessionStatusScreen`
+  - `TunnelMonitorScreen`
+  - `LogsScreen`
+- Widgets:
+  - `SessionStateBadge`, `ExpiryCountdown`, `ForwardTable`, `CommandPreviewPanel`
+- Action/controller layer:
+  - `UiController` dispatches to services; no OCI calls directly in widgets.
+
+## 6) Plugin mechanism for new node types (important for Exadata)
+Create a registry-based plugin system:
+
+- `TargetPlugin` interface:
+  - `node_type_name()`
+  - `discover_nodes(context) -> list[TargetNode]`
+  - `build_connection_request(node, user_input)`
+  - `default_forwards(node) -> list[ForwardSpec]`
+- `PluginRegistry`
+  - registers built-ins (`ComputePlugin`) + future (`ExadataPlugin`)
+- `DiscoveryService` asks each plugin for nodes.
+
+So adding Exadata later is mainly:
+1) implement `ExadataPlugin`
+2) add OCI adapter calls for Exadata inventory
+3) optionally add node-specific UI hints.
+No core refactor needed.
+
+## 7) Suggested class skeleton (concise)
+- `OciConfigProfileLoader` (reads `~/.oci/config` via SDK conventions)
+- `OciIdentityAdapter`, `OciBastionAdapter`, `OciComputeAdapter`, `OciDatabaseAdapter`
+- `DefaultSessionService`, `DefaultConnectionService`, `DefaultPortForwardService`
+- `SubprocessSshTransport`
+- `JsonProfileRepository` (e.g. `~/.config/obassh/profiles.json`)
+- `ConnectionOrchestrator` (facade used by UI)
+
+## 8) Non-functional choices to keep it robust
+- Async/event-driven service calls (Textual worker tasks)
+- Typed DTOs (`dataclasses` / `pydantic`)
+- Retry/backoff for OCI polling
+- Port collision checks before launching
+- Central error taxonomy (`UserInputError`, `OciApiError`, `SshRuntimeError`)
+- Dry-run mode (show commands without running)
+
+If you want, next step I can translate this architecture into a **concrete package tree + class stubs/method signatures** before implementation.
+
+
+# More detail
+
+Awesome — here’s the **implementation-ready blueprint** (still pre-coding) with concrete package layout, key classes, and method signatures.
+
+## Proposed package tree
+
+```text
+obassh/
+  pyproject.toml
+  README.md
+  src/obassh/
+    __init__.py
+    main.py
+
+    domain/
+      __init__.py
+      models.py
+      enums.py
+      errors.py
+      interfaces.py
+
+    services/
+      __init__.py
+      discovery_service.py
+      session_service.py
+      connection_service.py
+      port_forward_service.py
+      command_preview_service.py
+      audit_log_service.py
+      orchestrator.py
+
+    providers/
+      __init__.py
+      oci/
+        __init__.py
+        profile_loader.py
+        identity_adapter.py
+        bastion_adapter.py
+        compute_adapter.py
+        database_adapter.py
+
+    connectors/
+      __init__.py
+      ssh_transport.py
+      subprocess_ssh_transport.py
+      process_manager.py
+
+    plugins/
+      __init__.py
+      base.py
+      registry.py
+      compute_plugin.py
+      exadata_plugin.py   # initially placeholder
+
+    storage/
+      __init__.py
+      profile_repository.py
+      json_profile_repository.py
+
+    app/
+      __init__.py
+      textual_app.py
+      controllers/
+        __init__.py
+        ui_controller.py
+      screens/
+        profile_select.py
+        target_discovery.py
+        connection_profile.py
+        session_status.py
+        tunnel_monitor.py
+        logs.py
+      widgets/
+        session_badge.py
+        expiry_countdown.py
+        forward_table.py
+        command_preview_panel.py
+```
+
+## Domain models (`domain/models.py`)
+
+- `@dataclass class OciProfileRef`
+  - `name: str`
+  - `region: str`
+  - `tenancy_ocid: str`
+  - `user_ocid: str | None = None`
+  - `fingerprint: str | None = None`
+
+- `@dataclass class BastionRef`
+  - `ocid: str`
+  - `display_name: str`
+  - `compartment_ocid: str`
+  - `target_subnet_id: str | None = None`
+
+- `@dataclass class TargetNode` (base)
+  - `id: str`
+  - `node_type: NodeType`
+  - `display_name: str`
+  - `compartment_ocid: str`
+  - `ip_or_fqdn: str`
+  - `metadata: dict[str, str]`
+
+- `@dataclass class ForwardSpec`
+  - `name: str`
+  - `local_port: int`
+  - `remote_host: str`
+  - `remote_port: int`
+
+- `@dataclass class ConnectionProfile`
+  - `name: str`
+  - `oci_profile_name: str`
+  - `compartment_ocid: str`
+  - `bastion_ocid: str`
+  - `target_id: str`
+  - `target_type: NodeType`
+  - `ssh_user: str`
+  - `private_key_path: str`
+  - `forwards: list[ForwardSpec]`
+
+- `@dataclass class BastionSession`
+  - `ocid: str`
+  - `state: SessionState`
+  - `expires_at: datetime | None`
+  - `ssh_metadata: dict[str, str]`
+
+- `@dataclass class ConnectionRequest`
+  - `profile: ConnectionProfile`
+  - `target: TargetNode`
+  - `session: BastionSession`
+  - `forwards: list[ForwardSpec]`
+  - `interactive_shell: bool`
+
+- `@dataclass class ProcessHandle`
+  - `pid: int`
+  - `started_at: datetime`
+
+## Enums/errors
+
+- `NodeType`: `COMPUTE`, `EXADATA_VM_CLUSTER`, `EXADATA_DB_NODE`, `CUSTOM`
+- `SessionState`: `CREATING`, `ACTIVE`, `FAILED`, `DELETING`, `DELETED`, `UNKNOWN`
+- Errors:
+  - `ObasshError`
+  - `ValidationError`
+  - `OciApiError`
+  - `SessionTimeoutError`
+  - `SshExecutionError`
+
+## Interfaces (`domain/interfaces.py`)
+
+- `class CloudInventoryProvider(Protocol)`
+  - `def list_oci_profiles(self) -> list[OciProfileRef]: ...`
+  - `def list_bastions(self, profile: OciProfileRef, compartment_ocid: str) -> list[BastionRef]: ...`
+
+- `class BastionSessionProvider(Protocol)`
+  - `def create_managed_ssh_session(... ) -> BastionSession: ...`
+  - `def create_port_forward_session(... ) -> BastionSession: ...`
+  - `def get_session(self, profile: OciProfileRef, session_ocid: str) -> BastionSession: ...`
+  - `def wait_until_active(self, profile: OciProfileRef, session_ocid: str, timeout_s: int = 120) -> BastionSession: ...`
+  - `def delete_session(self, profile: OciProfileRef, session_ocid: str) -> None: ...`
+
+- `class TargetPlugin(Protocol)`
+  - `def node_type(self) -> NodeType: ...`
+  - `def discover_nodes(self, profile: OciProfileRef, compartment_ocid: str) -> list[TargetNode]: ...`
+  - `def default_forwards(self, node: TargetNode) -> list[ForwardSpec]: ...`
+  - `def validate_target(self, node: TargetNode) -> None: ...`
+
+- `class SshTransport(Protocol)`
+  - `def build_command(self, request: ConnectionRequest) -> list[str]: ...`
+  - `def start(self, command: list[str]) -> ProcessHandle: ...`
+  - `def stop(self, handle: ProcessHandle) -> None: ...`
+
+- `class ProfileRepository(Protocol)`
+  - `def list_profiles(self) -> list[ConnectionProfile]: ...`
+  - `def get_profile(self, name: str) -> ConnectionProfile | None: ...`
+  - `def save_profile(self, profile: ConnectionProfile) -> None: ...`
+  - `def delete_profile(self, name: str) -> None: ...`
+
+## Service layer signatures
+
+- `DiscoveryService`
+  - `list_profiles() -> list[OciProfileRef]`
+  - `list_bastions(profile_name: str, compartment_ocid: str) -> list[BastionRef]`
+  - `list_targets(profile_name: str, compartment_ocid: str, node_types: list[NodeType] | None = None) -> list[TargetNode]`
+
+- `SessionService`
+  - `open_session(profile: OciProfileRef, bastion: BastionRef, target: TargetNode, ssh_public_key: str, ttl_seconds: int) -> BastionSession`
+  - `wait_active(profile: OciProfileRef, session_ocid: str, timeout_s: int = 120) -> BastionSession`
+  - `close_session(profile: OciProfileRef, session_ocid: str) -> None`
+
+- `PortForwardService`
+  - `validate_forward_specs(forwards: list[ForwardSpec]) -> None`
+  - `ensure_ports_available(forwards: list[ForwardSpec]) -> None`
+
+- `ConnectionService`
+  - `preview_command(request: ConnectionRequest) -> str`
+  - `connect(request: ConnectionRequest) -> ProcessHandle`
+  - `disconnect(handle: ProcessHandle) -> None`
+
+- `ConnectionOrchestrator` (facade used by UI)
+  - `prepare_connection(profile_name: str, connection_profile_name: str) -> ConnectionRequest`
+  - `connect(connection_profile_name: str) -> ProcessHandle`
+  - `disconnect(connection_profile_name: str) -> None`
+  - `session_status(connection_profile_name: str) -> BastionSession`
+
+## OCI adapters (key responsibilities)
+
+- `OciConfigProfileLoader`
+  - reads SDK config profiles from `~/.oci/config`
+  - `load_profile(name: str) -> dict`
+  - `list_profile_names() -> list[str]`
+
+- `OciBastionAdapter`
+  - wraps `oci.bastion.BastionClient`
+  - maps SDK models -> `BastionRef`/`BastionSession`
+
+- `OciComputeAdapter`
+  - discovers compute instances and maps -> `Compute TargetNode`
+
+- `OciDatabaseAdapter`
+  - future discovery for Exadata-related resources (plugin consumed)
+
+## Plugin strategy (extensibility point)
+
+- `PluginRegistry`
+  - `register(plugin: TargetPlugin) -> None`
+  - `get(node_type: NodeType) -> TargetPlugin`
+  - `all() -> list[TargetPlugin]`
+
+- `ComputePlugin`
+  - uses `OciComputeAdapter`
+
+- `ExadataPlugin` (later)
+  - uses `OciDatabaseAdapter`
+  - can expose node-specific defaults (e.g., SQL*Net forward 1521)
+
+## Textual controller contract
+
+`UiController` should be the only object called by screens/widgets:
+- `load_initial_data()`
+- `discover_targets(...)`
+- `save_connection_profile(...)`
+- `start_connection(profile_name)`
+- `stop_connection(profile_name)`
+- `stream_logs(profile_name)`
+
+This keeps widgets passive and testable.
+
+## Suggested implementation sequence (next)
+1. Build `domain` + `interfaces` + `errors`.
+2. Build `providers/oci/profile_loader.py` and list SDK profiles.
+3. Implement `json_profile_repository.py`.
+4. Implement `SshTransport` + command builder.
+5. Implement `SessionService` and `DiscoveryService` for compute only.
+6. Wire `ConnectionOrchestrator`.
+7. Add minimal Textual app/screens.
+8. Add plugin registry and move compute discovery behind plugin.
+9. Add Exadata plugin scaffolding (no logic yet).
