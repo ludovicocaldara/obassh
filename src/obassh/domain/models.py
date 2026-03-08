@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .enums import NodeType, SessionState
+from .enums import NodeType, SessionState, SessionType
 
 
 @dataclass(slots=True)
@@ -60,7 +60,12 @@ class BastionSession:
     ocid: str
     state: SessionState
     expires_at: datetime | None
-    ssh_metadata: dict[str, str] = field(default_factory=dict)
+    session_type: SessionType = SessionType.MANAGED_SSH
+    target_resource: str = ""
+    target_port: int = 22
+    started_at: datetime | None = None
+    ttl_seconds: int = 0
+    ssh_metadata: dict[str, str] = field(default_factory=lambda: {})
 
 
 @dataclass(slots=True)

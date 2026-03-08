@@ -15,3 +15,9 @@ class SessionState(str, Enum):
     DELETING = "deleting"
     DELETED = "deleted"
     UNKNOWN = "unknown"
+
+
+class SessionType(str, Enum):
+    PORT_FORWARDING = "Port-Forwarding"
+    MANAGED_SSH = "Managed SSH"
+    SOCK5 = "SOCK5"

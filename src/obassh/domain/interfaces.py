@@ -33,6 +33,27 @@ class BastionSessionProvider(Protocol):
         ttl_seconds: int,
     ) -> BastionSession: ...
 
+    def create_port_forward_session(
+        self,
+        profile: OciProfileRef,
+        bastion_ocid: str,
+        target_ip: str,
+        target_port: int,
+        ssh_public_key: str,
+        ttl_seconds: int,
+    ) -> BastionSession: ...
+
+    def create_dynamic_port_forward_session(
+        self,
+        profile: OciProfileRef,
+        bastion_ocid: str,
+        target_ip: str,
+        ssh_public_key: str,
+        ttl_seconds: int,
+    ) -> BastionSession: ...
+
+    def list_sessions(self, profile: OciProfileRef, bastion_ocid: str) -> list[BastionSession]: ...
+
     def get_session(self, profile: OciProfileRef, session_ocid: str) -> BastionSession: ...
 
     def wait_until_active(

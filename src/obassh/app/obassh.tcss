@@ -1,3 +1,9 @@
+#session-table {
+    padding: 1 2 1 2;
+    border_title_style: bold underline;
+    border: solid;
+}
+
 #targets-compute-table {
     padding: 1 2 1 2;
     border_title_style: bold underline;
@@ -14,4 +20,34 @@
     padding: 1 2 1 2;
     border_title_style: bold underline;
     border: solid;
+}
+
+#session-hint,
+#session-selection,
+#targets-hint,
+#targets-selection,
+#profiles-hint,
+#profiles-selection {
+    padding: 0 2;
+}
+
+#session-modal {
+    width: 80%;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $panel;
+}
+
+#session-modal-title {
+    content-align: center middle;
+    padding-bottom: 1;
+    text-style: bold;
+}
+
+#session-modal-actions {
+    height: auto;
+    width: 100%;
+    align-horizontal: right;
+    padding-top: 1;
 }
