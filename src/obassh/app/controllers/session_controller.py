@@ -11,6 +11,7 @@ from textual.widgets import DataTable, Input, Static
 from obassh.app.models import AppState
 from obassh.app.services.ssh_command_builder import apply_identity_to_command, session_command
 from obassh.domain.enums import NodeType, SessionState, SessionType
+from obassh.domain.errors import OciApiError
 from obassh.domain.models import BastionSession, OciProfileRef, TargetNode
 from obassh.providers.oci import OciBastionSessionProvider
 from obassh.services.session_service import SessionService
@@ -49,10 +50,17 @@ class SessionController:
         if profile is None or not self._state.selected_bastion_ocid:
             return
         try:
-            sessions = self._session_service.list_sessions(profile, self._state.selected_bastion_ocid)
-            self._state.sessions = [session for session in sessions if session.state != SessionState.DELETED]
-        except Exception as exc:  # pragma: no cover
-            self._app.query_one("#session-selection", Static).update(f"Failed loading sessions: {exc}")
+            sessions = self._session_service.list_sessions(
+                profile,
+                self._state.selected_bastion_ocid,
+            )
+            self._state.sessions = [
+                session for session in sessions if session.state != SessionState.DELETED
+            ]
+        except OciApiError as exc:  # pragma: no cover
+            self._app.query_one("#session-selection", Static).update(
+                f"Failed loading sessions: {exc}"
+            )
             return
         self.refresh_session_rows()
 
@@ -81,22 +89,42 @@ class SessionController:
     def selected_session(self) -> BastionSession | None:
         if self._state.selected_session_id is None:
             return None
-        return next((session for session in self._state.sessions if session.ocid == self._state.selected_session_id), None)
+        return next(
+            (
+                session
+                for session in self._state.sessions
+                if session.ocid == self._state.selected_session_id
+            ),
+            None,
+        )
 
     def build_session_command(self, session: BastionSession) -> str:
         private_key_path = self._app.query_one("#settings-privkey-path", Input).value.strip()
-        return session_command(session, private_key_path, self._selected_profile(), self._provider)
+        return session_command(
+            session,
+            private_key_path,
+            self._selected_profile(),
+            self._provider,
+        )
 
     def update_selected_session_label(self, session_id: str) -> None:
         self._state.selected_session_id = session_id
         selected = self.selected_session()
         if selected is None:
-            self._app.query_one("#session-selection", Static).update(f"Selected session: {session_id}")
+            self._app.query_one("#session-selection", Static).update(
+                f"Selected session: {session_id}"
+            )
             return
         command = self.build_session_command(selected)
-        self._app.query_one("#session-selection", Static).update(f"Selected session: {session_id}\nSSH command: {command}")
+        self._app.query_one("#session-selection", Static).update(
+            f"Selected session: {session_id}\nSSH command: {command}"
+        )
 
-    def create_session_from_form(self, session_type: SessionType, form_data: dict[str, str] | None) -> None:
+    def create_session_from_form(
+        self,
+        session_type: SessionType,
+        form_data: dict[str, str] | None,
+    ) -> None:
         if not form_data:
             return
         profile = self._selected_profile()
@@ -108,18 +136,18 @@ class SessionController:
         private_key_path = self._app.query_one("#settings-privkey-path", Input).value.strip()
         if not self._state.selected_bastion_ocid and not self._ensure_single_bastion(profile.name):
             return
-        if not pubkey_path:
-            self._app.query_one("#session-selection", Static).update("SSH public key path is required")
-            return
-        if not private_key_path:
-            self._app.query_one("#session-selection", Static).update("SSH private key path is required")
+        key_validation_error = self._missing_key_message(pubkey_path, private_key_path)
+        if key_validation_error is not None:
+            self._app.query_one("#session-selection", Static).update(key_validation_error)
             return
 
         try:
             port = int(form_data["port"] or "22")
             ttl = int(form_data["ttl"] or "3600")
         except ValueError:
-            self._app.query_one("#session-selection", Static).update("Invalid numeric input for port/ttl")
+            self._app.query_one("#session-selection", Static).update(
+                "Invalid numeric input for port/ttl"
+            )
             return
 
         try:
@@ -139,8 +167,10 @@ class SessionController:
                 session_type=session_type,
                 target_port=port,
             )
-        except Exception as exc:  # pragma: no cover
-            self._app.query_one("#session-selection", Static).update(f"Session creation failed: {exc}")
+        except OciApiError as exc:  # pragma: no cover
+            self._app.query_one("#session-selection", Static).update(
+                f"Session creation failed: {exc}"
+            )
             return
 
         command = created.ssh_metadata.get("command", f"ssh opc@{created.target_resource}")
@@ -159,6 +189,15 @@ class SessionController:
         try:
             self._session_service.close_session(profile, selected.ocid)
             self.refresh_sessions_from_oci()
-            self._app.query_one("#session-selection", Static).update(f"Deleted session: {selected.ocid}")
-        except Exception as exc:  # pragma: no cover
+            self._app.query_one("#session-selection", Static).update(
+                f"Deleted session: {selected.ocid}"
+            )
+        except OciApiError as exc:  # pragma: no cover
             self._app.query_one("#session-selection", Static).update(f"Delete failed: {exc}")
+
+    def _missing_key_message(self, public_key: str, private_key: str) -> str | None:
+        if not public_key:
+            return "SSH public key path is required"
+        if not private_key:
+            return "SSH private key path is required"
+        return None

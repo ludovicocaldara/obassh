@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownArgumentType=false, reportUnknownVariableType=false
 
 import shlex
 import subprocess
@@ -82,8 +83,16 @@ class ObasshApp(App[str | None]):
                     yield Static("No profile selected", id="profiles-selection")
                 with TabPane("Settings", id="settings"):
                     yield Input(placeholder="Bastion OCID override", id="settings-bastion-ocid")
-                    yield Input(value=self._state.preferred_public_key_path, placeholder="SSH public key path", id="settings-pubkey-path")
-                    yield Input(value=self._state.preferred_private_key_path, placeholder="SSH private key path", id="settings-privkey-path")
+                    yield Input(
+                        value=self._state.preferred_public_key_path,
+                        placeholder="SSH public key path",
+                        id="settings-pubkey-path",
+                    )
+                    yield Input(
+                        value=self._state.preferred_private_key_path,
+                        placeholder="SSH private key path",
+                        id="settings-privkey-path",
+                    )
                     with Container(id="session-modal-actions"):
                         yield Button("Apply", variant="primary", id="settings-apply")
                     yield Static("Configure bastion/key defaults", id="settings-selection")
@@ -148,22 +157,39 @@ class ObasshApp(App[str | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id != "settings-apply":
             return
-        self._state.selected_bastion_ocid = self.query_one("#settings-bastion-ocid", Input).value.strip()
-        self._state.preferred_public_key_path = self.query_one("#settings-pubkey-path", Input).value.strip()
-        self._state.preferred_private_key_path = self.query_one("#settings-privkey-path", Input).value.strip()
+        self._state.selected_bastion_ocid = self.query_one(
+            "#settings-bastion-ocid", Input
+        ).value.strip()
+        self._state.preferred_public_key_path = self.query_one(
+            "#settings-pubkey-path", Input
+        ).value.strip()
+        self._state.preferred_private_key_path = self.query_one(
+            "#settings-privkey-path", Input
+        ).value.strip()
         self.query_one("#settings-selection", Static).update("Settings applied")
         self._sessions.refresh_sessions_from_oci()
 
     def action_new_port_forward(self) -> None:
         self.push_screen(
-            CreateSessionModal(SessionType.PORT_FORWARDING, self._state.selected_target_ip),
-            lambda data: self._sessions.create_session_from_form(SessionType.PORT_FORWARDING, data),
+            CreateSessionModal(
+                SessionType.PORT_FORWARDING,
+                self._state.selected_target_ip,
+            ),
+            lambda data: self._sessions.create_session_from_form(
+                SessionType.PORT_FORWARDING, data
+            ),
         )
 
     def action_new_managed_ssh(self) -> None:
         self.push_screen(
-            CreateSessionModal(SessionType.MANAGED_SSH, self._state.selected_target_ip),
-            lambda data: self._sessions.create_session_from_form(SessionType.MANAGED_SSH, data),
+            CreateSessionModal(
+                SessionType.MANAGED_SSH,
+                self._state.selected_target_ip,
+            ),
+            lambda data: self._sessions.create_session_from_form(
+                SessionType.MANAGED_SSH,
+                data,
+            ),
         )
 
     def action_new_socks5(self) -> None:
@@ -178,7 +204,9 @@ class ObasshApp(App[str | None]):
     def action_refresh(self) -> None:
         selected_profile = self._state.selected_profile_name
         if not selected_profile:
-            self.query_one("#session-selection", Static).update("Select a profile before refreshing")
+            self.query_one("#session-selection", Static).update(
+                "Select a profile before refreshing"
+            )
             return
 
         self._profile_targets.load_targets_for_profile(selected_profile)

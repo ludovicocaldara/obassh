@@ -15,7 +15,10 @@ class _Provider:
 
 def test_session_command_builds_sock5_command_with_bastion_host_and_dynamic_port() -> None:
     session = BastionSession(
-        ocid="ocid1.bastionsession.oc1.uk-london-1.amaaaaaaknuwtjiapxsbqrzrngcg6tmphpdnuwmsrf7uztp2mmwinnbidxrq",
+        ocid=(
+            "ocid1.bastionsession.oc1.uk-london-1."
+            "amaaaaaaknuwtjiapxsbqrzrngcg6tmphpdnuwmsrf7uztp2mmwinnbidxrq"
+        ),
         state=SessionState.ACTIVE,
         expires_at=datetime.now(),
         session_type=SessionType.SOCKS5,
@@ -23,19 +26,27 @@ def test_session_command_builds_sock5_command_with_bastion_host_and_dynamic_port
         ssh_metadata={
             "bastion_host": "host.bastion.uk-london-1.oci.oraclecloud.com",
             "bastion_port": "22",
-            "command": "ssh -N -D 127.0.0.1:2022 -p 22 ignored@host.bastion.uk-london-1.oci.oraclecloud.com",
+            "command": (
+                "ssh -N -D 127.0.0.1:2022 -p 22 "
+                "ignored@host.bastion.uk-london-1.oci.oraclecloud.com"
+            ),
         },
     )
 
     command = session_command(
         session=session,
         private_key_path="/tmp/id_rsa",
-        profile=OciProfileRef("DEFAULT", "uk-london-1", "ocid1.tenancy.oc1..x"),
+        profile=OciProfileRef(
+            "DEFAULT",
+            "uk-london-1",
+            "ocid1.tenancy.oc1..x",
+        ),
         provider=cast(OciBastionSessionProvider, _Provider()),
     )
 
     assert command == (
         "ssh -i /tmp/id_rsa -N -D 127.0.0.1:2022 -p 22 "
-        "ocid1.bastionsession.oc1.uk-london-1.amaaaaaaknuwtjiapxsbqrzrngcg6tmphpdnuwmsrf7uztp2mmwinnbidxrq@"
+        "ocid1.bastionsession.oc1.uk-london-1."
+        "amaaaaaaknuwtjiapxsbqrzrngcg6tmphpdnuwmsrf7uztp2mmwinnbidxrq@"
         "host.bastion.uk-london-1.oci.oraclecloud.com"
     )

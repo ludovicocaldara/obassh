@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownArgumentType=false, reportUnknownVariableType=false
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -134,10 +135,14 @@ class OciBastionSessionProvider:
             response = cast(
                 Any,
                 oci.wait_until(
-                client,
-                client.get_session(session_ocid),
-                evaluate_response=lambda r: cast(str, cast(Any, r).data.lifecycle_state).upper() == "ACTIVE",  # type: ignore[reportUnknownLambdaType]
-                max_wait_seconds=timeout_s,
+                    client,
+                    client.get_session(session_ocid),
+                    evaluate_response=lambda r: cast(
+                        str,
+                        cast(Any, r).data.lifecycle_state,
+                    ).upper()
+                    == "ACTIVE",  # type: ignore[reportUnknownLambdaType]
+                    max_wait_seconds=timeout_s,
                 ),
             )
             return self._map_session(response.data)
@@ -149,7 +154,9 @@ class OciBastionSessionProvider:
         try:
             client.delete_session(session_ocid)
         except Exception as exc:  # pragma: no cover
-            raise OciApiError(f"Failed to delete OCI bastion session {session_ocid}: {exc}") from exc
+            raise OciApiError(
+                f"Failed to delete OCI bastion session {session_ocid}: {exc}"
+            ) from exc
 
     def _map_session(self, item: Any) -> BastionSession:
         lifecycle = cast(str, getattr(item, "lifecycle_state", "UNKNOWN") or "UNKNOWN").upper()
@@ -161,37 +168,10 @@ class OciBastionSessionProvider:
             "DELETED": SessionState.DELETED,
         }
         target_details = getattr(item, "target_resource_details", None)
-        session_type_raw = cast(str, getattr(target_details, "session_type", "MANAGED_SSH") or "MANAGED_SSH")
-        session_type = {
-            "PORT_FORWARDING": SessionType.PORT_FORWARDING,
-            "DYNAMIC_PORT_FORWARDING": SessionType.SOCKS5,
-            "MANAGED_SSH": SessionType.MANAGED_SSH,
-        }.get(session_type_raw.upper(), SessionType.MANAGED_SSH)
-
-        target_ip = cast(str, getattr(target_details, "target_resource_private_ip_address", "") or "")
-        target_fqdn = cast(str, getattr(target_details, "target_resource_fqdn", "") or "")
-        target_resource = target_fqdn or target_ip
-        target_port = int(getattr(target_details, "target_resource_port", 22) or 22)
-        ttl_seconds = int(getattr(item, "session_ttl_in_seconds", 0) or 0)
-        started_at = cast(datetime | None, getattr(item, "time_created", None))
-        if started_at and started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
-        expires_at = None
-        if started_at and ttl_seconds > 0:
-            expires_at = started_at + timedelta(seconds=ttl_seconds)
-
-        ssh_metadata: dict[str, str] = {}
-        ssh_meta_obj = getattr(item, "ssh_metadata", None)
-        if ssh_meta_obj is not None:
-            command = cast(str, getattr(ssh_meta_obj, "command", "") or "")
-            bastion_host = cast(str, getattr(ssh_meta_obj, "bastion_host", "") or "")
-            bastion_port = cast(str, getattr(ssh_meta_obj, "bastion_port", "") or "")
-            if command:
-                ssh_metadata["command"] = command
-            if bastion_host:
-                ssh_metadata["bastion_host"] = bastion_host
-            if bastion_port:
-                ssh_metadata["bastion_port"] = bastion_port
+        session_type = self._map_session_type(target_details)
+        target_resource, target_port = self._target_resource_info(target_details)
+        started_at, ttl_seconds, expires_at = self._timing_info(item)
+        ssh_metadata = self._extract_ssh_metadata(getattr(item, "ssh_metadata", None))
 
         return BastionSession(
             ocid=cast(str, getattr(item, "id", "")),
@@ -204,3 +184,50 @@ class OciBastionSessionProvider:
             ttl_seconds=ttl_seconds,
             ssh_metadata=ssh_metadata,
         )
+
+    def _map_session_type(self, target_details: Any) -> SessionType:
+        session_type_raw = cast(
+            str,
+            getattr(target_details, "session_type", "MANAGED_SSH")
+            or "MANAGED_SSH",
+        )
+        return {
+            "PORT_FORWARDING": SessionType.PORT_FORWARDING,
+            "DYNAMIC_PORT_FORWARDING": SessionType.SOCKS5,
+            "MANAGED_SSH": SessionType.MANAGED_SSH,
+        }.get(session_type_raw.upper(), SessionType.MANAGED_SSH)
+
+    def _target_resource_info(self, target_details: Any) -> tuple[str, int]:
+        target_ip = cast(
+            str,
+            getattr(target_details, "target_resource_private_ip_address", "") or "",
+        )
+        target_fqdn = cast(str, getattr(target_details, "target_resource_fqdn", "") or "")
+        target_resource = target_fqdn or target_ip
+        target_port = int(getattr(target_details, "target_resource_port", 22) or 22)
+        return target_resource, target_port
+
+    def _timing_info(self, item: Any) -> tuple[datetime | None, int, datetime | None]:
+        ttl_seconds = int(getattr(item, "session_ttl_in_seconds", 0) or 0)
+        started_at = cast(datetime | None, getattr(item, "time_created", None))
+        if started_at and started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        expires_at = None
+        if started_at and ttl_seconds > 0:
+            expires_at = started_at + timedelta(seconds=ttl_seconds)
+        return started_at, ttl_seconds, expires_at
+
+    def _extract_ssh_metadata(self, ssh_meta_obj: Any) -> dict[str, str]:
+        ssh_metadata: dict[str, str] = {}
+        if ssh_meta_obj is None:
+            return ssh_metadata
+        command = cast(str, getattr(ssh_meta_obj, "command", "") or "")
+        bastion_host = cast(str, getattr(ssh_meta_obj, "bastion_host", "") or "")
+        bastion_port = cast(str, getattr(ssh_meta_obj, "bastion_port", "") or "")
+        if command:
+            ssh_metadata["command"] = command
+        if bastion_host:
+            ssh_metadata["bastion_host"] = bastion_host
+        if bastion_port:
+            ssh_metadata["bastion_port"] = bastion_port
+        return ssh_metadata

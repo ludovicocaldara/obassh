@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 import shlex
 
-from obassh.domain.enums import SessionType
-from obassh.domain.models import BastionSession, OciProfileRef
-from obassh.providers.oci import OciBastionSessionProvider
+from obassh.domain.enums import SessionType  # pylint: disable=import-error
+from obassh.domain.errors import OciApiError  # pylint: disable=import-error
+from obassh.domain.models import BastionSession, OciProfileRef  # pylint: disable=import-error
+from obassh.providers.oci import OciBastionSessionProvider  # pylint: disable=import-error
 
 
 def apply_identity_to_command(command: str, private_key_path: str) -> str:
@@ -76,49 +77,77 @@ def session_command(
             if full_session.ssh_metadata:
                 session.ssh_metadata.update(full_session.ssh_metadata)
                 metadata_command = session.ssh_metadata.get("command", metadata_command)
-        except Exception:
+        except OciApiError:
             pass
 
     if session.session_type is SessionType.PORT_FORWARDING:
-        bastion_host = session.ssh_metadata.get("bastion_host", "")
-        bastion_port = session.ssh_metadata.get("bastion_port", "22")
-
-        if not bastion_host and metadata_command:
-            match = re.search(r"@([^\s]+)", metadata_command)
-            if match:
-                bastion_host = match.group(1)
-
-        local_port = extract_local_port(metadata_command, session.target_port)
-
-        if not bastion_host and profile is not None:
-            bastion_host = f"host.bastion.{profile.region}.oci.oraclecloud.com"
-
-        if bastion_host:
-            return (
-                f"ssh -i {shlex.quote(private_key_path)} "
-                f"-N -L {local_port}:{session.target_resource}:{session.target_port} "
-                f"-p {bastion_port} {session.ocid}@{bastion_host}"
-            )
-
+        return _port_forward_command(session, private_key_path, profile, metadata_command)
     if session.session_type is SessionType.SOCKS5:
-        bastion_host = session.ssh_metadata.get("bastion_host", "")
-        bastion_port = session.ssh_metadata.get("bastion_port", "22")
+        return _socks5_command(session, private_key_path, profile, metadata_command)
 
-        if not bastion_host and metadata_command:
-            match = re.search(r"@([^\s]+)", metadata_command)
-            if match:
-                bastion_host = match.group(1)
+    return session.ssh_metadata.get(
+        "command", f"ssh -i {private_key_path} opc@{session.target_resource}"
+    )
 
-        local_port = extract_dynamic_local_port(metadata_command, session.target_port)
 
-        if not bastion_host and profile is not None:
-            bastion_host = f"host.bastion.{profile.region}.oci.oraclecloud.com"
+def _resolve_bastion_host(
+    metadata_command: str,
+    metadata_host: str,
+    profile: OciProfileRef | None,
+) -> str:
+    bastion_host = metadata_host
+    if not bastion_host and metadata_command:
+        match = re.search(r"@([^\s]+)", metadata_command)
+        if match:
+            bastion_host = match.group(1)
+    if not bastion_host and profile is not None:
+        bastion_host = f"host.bastion.{profile.region}.oci.oraclecloud.com"
+    return bastion_host
 
-        if bastion_host:
-            return (
-                f"ssh -i {shlex.quote(private_key_path)} "
-                f"-N -D 127.0.0.1:{local_port} "
-                f"-p {bastion_port} {session.ocid}@{bastion_host}"
-            )
 
-    return session.ssh_metadata.get("command", f"ssh -i {private_key_path} opc@{session.target_resource}")
+def _port_forward_command(
+    session: BastionSession,
+    private_key_path: str,
+    profile: OciProfileRef | None,
+    metadata_command: str,
+) -> str:
+    bastion_host = _resolve_bastion_host(
+        metadata_command,
+        session.ssh_metadata.get("bastion_host", ""),
+        profile,
+    )
+    bastion_port = session.ssh_metadata.get("bastion_port", "22")
+    local_port = extract_local_port(metadata_command, session.target_port)
+    if not bastion_host:
+        return session.ssh_metadata.get(
+            "command", f"ssh -i {private_key_path} opc@{session.target_resource}"
+        )
+    return (
+        f"ssh -i {shlex.quote(private_key_path)} "
+        f"-N -L {local_port}:{session.target_resource}:{session.target_port} "
+        f"-p {bastion_port} {session.ocid}@{bastion_host}"
+    )
+
+
+def _socks5_command(
+    session: BastionSession,
+    private_key_path: str,
+    profile: OciProfileRef | None,
+    metadata_command: str,
+) -> str:
+    bastion_host = _resolve_bastion_host(
+        metadata_command,
+        session.ssh_metadata.get("bastion_host", ""),
+        profile,
+    )
+    bastion_port = session.ssh_metadata.get("bastion_port", "22")
+    local_port = extract_dynamic_local_port(metadata_command, session.target_port)
+    if not bastion_host:
+        return session.ssh_metadata.get(
+            "command", f"ssh -i {private_key_path} opc@{session.target_resource}"
+        )
+    return (
+        f"ssh -i {shlex.quote(private_key_path)} "
+        f"-N -D 127.0.0.1:{local_port} "
+        f"-p {bastion_port} {session.ocid}@{bastion_host}"
+    )

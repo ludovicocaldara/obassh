@@ -21,7 +21,11 @@ class CreateSessionModal(ModalScreen[dict[str, str] | None]):
     def compose(self) -> ComposeResult:
         with Container(id="session-modal"):
             yield Label(f"Create {self._session_type.value} session", id="session-modal-title")
-            yield Input(value=self._initial_target_ip, placeholder="Target IP / Hostname", id="session-target")
+            yield Input(
+                value=self._initial_target_ip,
+                placeholder="Target IP / Hostname",
+                id="session-target",
+            )
             yield Input(value="22", placeholder="Target Port", id="session-port")
             yield Input(value="3600", placeholder="TTL (seconds)", id="session-ttl")
             with Container(id="session-modal-actions"):

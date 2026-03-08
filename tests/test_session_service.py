@@ -19,7 +19,12 @@ class _Provider:
     ) -> BastionSession:
         _ = profile, bastion_ocid, target_ip, ssh_public_key, ttl_seconds
         self.called = "managed"
-        return BastionSession("sid", SessionState.ACTIVE, datetime.now(), session_type=SessionType.MANAGED_SSH)
+        return BastionSession(
+            "sid",
+            SessionState.ACTIVE,
+            datetime.now(),
+            session_type=SessionType.MANAGED_SSH,
+        )
 
     def create_port_forward_session(
         self,
@@ -32,7 +37,12 @@ class _Provider:
     ) -> BastionSession:
         _ = profile, bastion_ocid, target_ip, target_port, ssh_public_key, ttl_seconds
         self.called = "pf"
-        return BastionSession("sid", SessionState.ACTIVE, datetime.now(), session_type=SessionType.PORT_FORWARDING)
+        return BastionSession(
+            "sid",
+            SessionState.ACTIVE,
+            datetime.now(),
+            session_type=SessionType.PORT_FORWARDING,
+        )
 
     def create_dynamic_port_forward_session(
         self,
@@ -44,7 +54,12 @@ class _Provider:
     ) -> BastionSession:
         _ = profile, bastion_ocid, target_ip, ssh_public_key, ttl_seconds
         self.called = "socks5"
-        return BastionSession("sid", SessionState.ACTIVE, datetime.now(), session_type=SessionType.SOCKS5)
+        return BastionSession(
+            "sid",
+            SessionState.ACTIVE,
+            datetime.now(),
+            session_type=SessionType.SOCKS5,
+        )
 
     def list_sessions(self, profile: OciProfileRef, bastion_ocid: str) -> list[BastionSession]:
         _ = profile, bastion_ocid
@@ -54,7 +69,12 @@ class _Provider:
         _ = profile, session_ocid
         return BastionSession("sid", SessionState.ACTIVE, datetime.now())
 
-    def wait_until_active(self, profile: OciProfileRef, session_ocid: str, timeout_s: int = 120) -> BastionSession:
+    def wait_until_active(
+        self,
+        profile: OciProfileRef,
+        session_ocid: str,
+        timeout_s: int = 120,
+    ) -> BastionSession:
         _ = profile, session_ocid, timeout_s
         return BastionSession("sid", SessionState.ACTIVE, datetime.now())
 
@@ -85,7 +105,11 @@ def test_open_session_uses_port_forward_provider_call() -> None:
     service = SessionService(provider)
 
     session = service.open_session(
-        _profile(), "bastion", _target(), "ssh-rsa ...", session_type=SessionType.PORT_FORWARDING
+        _profile(),
+        "bastion",
+        _target(),
+        "ssh-rsa ...",
+        session_type=SessionType.PORT_FORWARDING,
     )
 
     assert provider.called == "pf"
@@ -97,7 +121,11 @@ def test_open_session_uses_sock5_provider_call() -> None:
     service = SessionService(provider)
 
     session = service.open_session(
-        _profile(), "bastion", _target(), "ssh-rsa ...", session_type=SessionType.SOCKS5
+        _profile(),
+        "bastion",
+        _target(),
+        "ssh-rsa ...",
+        session_type=SessionType.SOCKS5,
     )
 
     assert provider.called == "socks5"
