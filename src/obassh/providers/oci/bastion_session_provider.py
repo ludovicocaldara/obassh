@@ -164,7 +164,7 @@ class OciBastionSessionProvider:
         session_type_raw = cast(str, getattr(target_details, "session_type", "MANAGED_SSH") or "MANAGED_SSH")
         session_type = {
             "PORT_FORWARDING": SessionType.PORT_FORWARDING,
-            "DYNAMIC_PORT_FORWARDING": SessionType.SOCK5,
+            "DYNAMIC_PORT_FORWARDING": SessionType.SOCKS5,
             "MANAGED_SSH": SessionType.MANAGED_SSH,
         }.get(session_type_raw.upper(), SessionType.MANAGED_SSH)
 

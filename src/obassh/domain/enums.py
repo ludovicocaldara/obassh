@@ -20,4 +20,4 @@ class SessionState(str, Enum):
 class SessionType(str, Enum):
     PORT_FORWARDING = "Port-Forwarding"
     MANAGED_SSH = "Managed SSH"
-    SOCK5 = "SOCK5"
+    SOCKS5 = "SOCKS5"

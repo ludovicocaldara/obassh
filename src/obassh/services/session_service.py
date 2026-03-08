@@ -28,7 +28,7 @@ class SessionService:
                 ssh_public_key=ssh_public_key,
                 ttl_seconds=ttl_seconds,
             )
-        if session_type is SessionType.SOCK5:
+        if session_type is SessionType.SOCKS5:
             return self._provider.create_dynamic_port_forward_session(
                 profile=profile,
                 bastion_ocid=bastion_ocid,

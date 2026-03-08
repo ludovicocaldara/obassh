@@ -44,7 +44,7 @@ class _Provider:
     ) -> BastionSession:
         _ = profile, bastion_ocid, target_ip, ssh_public_key, ttl_seconds
         self.called = "socks5"
-        return BastionSession("sid", SessionState.ACTIVE, datetime.now(), session_type=SessionType.SOCK5)
+        return BastionSession("sid", SessionState.ACTIVE, datetime.now(), session_type=SessionType.SOCKS5)
 
     def list_sessions(self, profile: OciProfileRef, bastion_ocid: str) -> list[BastionSession]:
         _ = profile, bastion_ocid
@@ -97,8 +97,8 @@ def test_open_session_uses_sock5_provider_call() -> None:
     service = SessionService(provider)
 
     session = service.open_session(
-        _profile(), "bastion", _target(), "ssh-rsa ...", session_type=SessionType.SOCK5
+        _profile(), "bastion", _target(), "ssh-rsa ...", session_type=SessionType.SOCKS5
     )
 
     assert provider.called == "socks5"
-    assert session.session_type is SessionType.SOCK5
+    assert session.session_type is SessionType.SOCKS5
