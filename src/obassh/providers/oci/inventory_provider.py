@@ -111,6 +111,24 @@ class OciInventoryProvider:
             )
         return rows
 
+    def list_bastions(self, profile_name: str, compartment_ocid: str) -> list[dict[str, str]]:
+        config = cast(dict[str, Any], oci.config.from_file(self._config_path, profile_name))
+        bastion_client = oci.bastion.BastionClient(config)
+        rows: list[dict[str, str]] = []
+        bastions = cast(
+            list[Any],
+            bastion_client.list_bastions(compartment_id=compartment_ocid).data,
+        )
+        for bastion in bastions:
+            rows.append(
+                {
+                    "ocid": bastion.id,
+                    "name": bastion.name,
+                    "state": str(bastion.lifecycle_state),
+                }
+            )
+        return rows
+
     def list_db_system_nodes(self, profile_name: str, compartment_ocid: str) -> list[dict[str, str]]:
         config = cast(dict[str, Any], oci.config.from_file(self._config_path, profile_name))
         database_client = oci.database.DatabaseClient(config)
