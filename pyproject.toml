@@ -12,6 +12,9 @@ dependencies = [
   "oci>=2.0",
 ]
 
+[project.scripts]
+obassh = "obassh.main:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

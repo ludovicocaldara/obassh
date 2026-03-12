@@ -70,15 +70,51 @@ class SessionController:
                 profile,
                 self._state.selected_bastion_ocid,
             )
-            self._state.sessions = [
+            fresh_sessions = [
                 session for session in sessions if session.state != SessionState.DELETED
             ]
+            self._state.sessions = self._merge_runtime_session_data(fresh_sessions)
         except OciApiError as exc:  # pragma: no cover
             self._app.query_one("#session-selection", Static).update(
                 f"Failed loading sessions: {exc}"
             )
             return
         self.refresh_session_rows()
+
+    def _merge_runtime_session_data(
+        self,
+        fresh_sessions: list[BastionSession],
+    ) -> list[BastionSession]:
+        """Preserve local runtime metadata (pid/logfile/local forward info) across OCI refreshes."""
+        previous_by_id = {session.ocid: session for session in self._state.sessions}
+        merged: list[BastionSession] = []
+
+        for session in fresh_sessions:
+            previous = previous_by_id.get(session.ocid)
+            if previous is None:
+                runtime_pid = self._state.ssh_processes.get(session.ocid)
+                if runtime_pid is not None:
+                    session.pid = runtime_pid
+                merged.append(session)
+                continue
+
+            merged_metadata = dict(session.ssh_metadata)
+            for key, value in previous.ssh_metadata.items():
+                if value and not merged_metadata.get(key):
+                    merged_metadata[key] = value
+
+            # Keep user-adjusted forwarding values and reconstructed commands stable in UI.
+            for key in ("local_port", "remote_port", "remote_ip", "command"):
+                previous_value = previous.ssh_metadata.get(key)
+                if previous_value:
+                    merged_metadata[key] = previous_value
+
+            session.ssh_metadata = merged_metadata
+            session.pid = previous.pid or self._state.ssh_processes.get(session.ocid)
+            session.logfile_path = previous.logfile_path
+            merged.append(session)
+
+        return merged
 
     def refresh_session_rows(self) -> None:
         table = cast(DataTable[str], self._app.query_one("#session-table", DataTable))
