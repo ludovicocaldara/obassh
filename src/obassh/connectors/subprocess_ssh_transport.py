@@ -19,6 +19,10 @@ class SubprocessSshTransport:
             "StrictHostKeyChecking=accept-new",
             "-o",
             "ServerAliveInterval=30",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "GlobalKnownHostsFile=/dev/null",
         ]
 
         for forward in request.forwards:
