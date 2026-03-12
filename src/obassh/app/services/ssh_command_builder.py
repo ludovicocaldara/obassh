@@ -11,6 +11,13 @@ from obassh.domain.models import BastionSession, OciProfileRef  # pylint: disabl
 from obassh.providers.oci import OciBastionSessionProvider  # pylint: disable=import-error
 
 
+_DEFAULT_SSH_OPTIONS = {
+    "StrictHostKeyChecking": "accept-new",
+    "UserKnownHostsFile": "/dev/null",
+    "GlobalKnownHostsFile": "/dev/null",
+}
+
+
 def apply_identity_to_command(command: str, private_key_path: str) -> str:
     """Inject or replace -i key argument in ssh commands."""
     if not command:
@@ -81,13 +88,16 @@ def session_command(
             pass
 
     if session.session_type is SessionType.PORT_FORWARDING:
-        return _port_forward_command(session, private_key_path, profile, metadata_command)
+        command = _port_forward_command(session, private_key_path, profile, metadata_command)
+        return _with_default_ssh_options(command)
     if session.session_type is SessionType.SOCKS5:
-        return _socks5_command(session, private_key_path, profile, metadata_command)
+        command = _socks5_command(session, private_key_path, profile, metadata_command)
+        return _with_default_ssh_options(command)
 
-    return session.ssh_metadata.get(
+    command = session.ssh_metadata.get(
         "command", f"ssh -i {private_key_path} opc@{session.target_resource}"
     )
+    return _with_default_ssh_options(command)
 
 
 def _resolve_bastion_host(
@@ -117,16 +127,31 @@ def _port_forward_command(
         profile,
     )
     bastion_port = session.ssh_metadata.get("bastion_port", "22")
-    local_port = extract_local_port(metadata_command, session.target_port)
+    local_port = _safe_int(
+        session.ssh_metadata.get("local_port", ""),
+        extract_local_port(metadata_command, session.target_port),
+    )
+    remote_port = _safe_int(
+        session.ssh_metadata.get("remote_port", ""),
+        session.target_port,
+    )
+    remote_ip = session.ssh_metadata.get("remote_ip", "") or session.target_resource
     if not bastion_host:
         return session.ssh_metadata.get(
             "command", f"ssh -i {private_key_path} opc@{session.target_resource}"
         )
     return (
         f"ssh -i {shlex.quote(private_key_path)} "
-        f"-N -L {local_port}:{session.target_resource}:{session.target_port} "
+        f"-N -L {local_port}:{remote_ip}:{remote_port} "
         f"-p {bastion_port} {session.ocid}@{bastion_host}"
     )
+
+
+def _safe_int(value: str, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _socks5_command(
@@ -151,3 +176,47 @@ def _socks5_command(
         f"-N -D 127.0.0.1:{local_port} "
         f"-p {bastion_port} {session.ocid}@{bastion_host}"
     )
+
+
+def _with_default_ssh_options(command: str) -> str:
+    """Ensure SSH commands auto-accept unknown host fingerprints and avoid known_hosts writes."""
+    if not command:
+        return command
+
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command
+
+    normalized = _normalize_ssh_parts(parts)
+    if normalized is None:
+        return command
+    return shlex.join(normalized)
+
+
+def _normalize_ssh_parts(parts: list[str]) -> list[str] | None:
+    if not parts or parts[0] != "ssh":
+        return None
+
+    normalized = list(parts)
+    seen_options: set[str] = set()
+    idx = 1
+    while idx < len(normalized):
+        if normalized[idx] == "-o" and idx + 1 < len(normalized):
+            option = normalized[idx + 1]
+            if "=" in option:
+                key, value = option.split("=", 1)
+                seen_options.add(key)
+                if key == "ProxyCommand":
+                    proxy_command = _with_default_ssh_options(value)
+                    normalized[idx + 1] = f"ProxyCommand={proxy_command}"
+            idx += 2
+            continue
+        idx += 1
+
+    insert_at = 1
+    for key, value in _DEFAULT_SSH_OPTIONS.items():
+        if key not in seen_options:
+            normalized[insert_at:insert_at] = ["-o", f"{key}={value}"]
+            insert_at += 2
+    return normalized

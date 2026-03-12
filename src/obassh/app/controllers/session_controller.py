@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Callable, cast
 from textual.widgets import DataTable, Input, Static
 
 from obassh.app.models import AppState
-from obassh.app.services.ssh_command_builder import apply_identity_to_command, session_command
+from obassh.app.services.ssh_command_builder import (
+    apply_identity_to_command,
+    extract_local_port,
+    session_command,
+)
 from obassh.domain.enums import NodeType, SessionState, SessionType
 from obassh.domain.errors import OciApiError
 from obassh.domain.models import BastionSession, OciProfileRef, TargetNode
@@ -48,6 +52,7 @@ class SessionController:
             "Type",
             "Target Resource",
             "Target Port",
+            "Local Port",
             "State",
             "SSH session",
             "TTL",
@@ -80,6 +85,16 @@ class SessionController:
         table.clear(columns=False)
         for session in self._state.sessions:
             ssh_running = self._is_ssh_session_running(session.ocid)
+            local_port = "-"
+            if session.session_type is SessionType.PORT_FORWARDING:
+                local_port = str(
+                    extract_local_port(
+                        session.ssh_metadata.get("command", ""),
+                        session.target_port,
+                    )
+                )
+                if session.ssh_metadata.get("local_port"):
+                    local_port = session.ssh_metadata["local_port"]
             ttl = max(session.ttl_seconds, 0)
             created = session.started_at
             if created is None:
@@ -92,6 +107,7 @@ class SessionController:
                 session.session_type.value,
                 session.target_resource,
                 str(session.target_port),
+                local_port,
                 session.state.value,
                 "running" if ssh_running else "not running",
                 str(ttl),
