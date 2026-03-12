@@ -66,6 +66,8 @@ class BastionSession:
     started_at: datetime | None = None
     ttl_seconds: int = 0
     ssh_metadata: dict[str, str] = field(default_factory=lambda: {})
+    pid: int | None = None
+    logfile_path: str | None = None
 
 
 @dataclass(slots=True)

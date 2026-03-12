@@ -48,9 +48,17 @@ class SubprocessSshTransport:
         command.append(f"{request.profile.ssh_user}@{request.target.ip_or_fqdn}")
         return command
 
-    def start(self, command: list[str]) -> ProcessHandle:
+    def start(self, command: list[str], logfile_path: str, header_text: str) -> ProcessHandle:
         try:
-            process = subprocess.Popen(command)  # noqa: S603  # pylint: disable=consider-using-with
+            # Write header text containing the executed command at the top of the log file
+            with open(logfile_path, "w") as logfile:
+                logfile.write(f"Executed command: {' '.join(command)}\n")
+                if header_text:
+                    logfile.write(f"{header_text}\n")
+                logfile.write("="*80 + "\n\n")
+            # Open the file for process redirection in append mode (must not truncate)
+            logfile = open(logfile_path, "a")
+            process = subprocess.Popen(command, stdout=logfile, stderr=logfile)
         except OSError as exc:
             raise SshExecutionError(str(exc)) from exc
         return ProcessHandle(pid=process.pid, started_at=datetime.now(timezone.utc))

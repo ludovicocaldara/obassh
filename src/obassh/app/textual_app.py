@@ -47,6 +47,7 @@ class ObasshApp(App[str | None]):
         ("r", "refresh", "Refresh"),
         ("enter", "edit_and_execute", "Edit+Execute command"),
         ("x", "execute_direct", "Execute command"),
+        ("k", "kill_port_forward", "Kill port forward"),
     ]
 
     def __init__(self) -> None:
@@ -223,6 +224,7 @@ class ObasshApp(App[str | None]):
             )
             return
         command = self._sessions.build_session_command(selected)
+        self._state.pending_execution_session_id = selected.ocid
         self.push_screen(CommandEditModal(command), self._execute_ssh_command)
 
     def action_execute_direct(self) -> None:
@@ -235,16 +237,67 @@ class ObasshApp(App[str | None]):
             )
             return
         command = self._sessions.build_session_command(selected)
+        self._state.pending_execution_session_id = selected.ocid
         self.push_screen(CommandEditModal(command), self._execute_ssh_command)
 
-    def _execute_ssh_command(self, command: str | None) -> None:
-        if not command:
+    def action_kill_port_forward(self) -> None:
+        selected = self._sessions.selected_session()
+        if not selected or not selected.pid:
+            self.query_one("#session-selection", Static).update(
+                "No active port forward PID to kill"
+            )
             return
-        print(f"Executing SSH command: {command}")
+        try:
+            import os
+            os.kill(selected.pid, 9)
+            self._state.ssh_processes.pop(selected.ocid, None)
+            # Optionally, also clear the fields in the session object
+            selected.pid = None
+            selected.logfile_path = selected.logfile_path  # Keep for audit/history
+            self._sessions.refresh_session_rows()
+            self.query_one("#session-selection", Static).update(
+                f"Killed port forward PID {selected.pid or '-'} for session {selected.ocid}"
+            )
+        except Exception as exc:
+            self.query_one("#session-selection", Static).update(
+                f"Failed to kill PID {selected.pid}: {exc}"
+            )
+
+    def _execute_ssh_command(self, command: str | None) -> None:
+        import os
+        session_id = self._state.pending_execution_session_id
+        self._state.pending_execution_session_id = None
+        if not command or session_id is None:
+            return
+        # Find the selected session for this execution
+        selected = self._sessions.selected_session()
+        if not selected:
+            return
+        # Build log file path
+        log_dir = os.path.expanduser("~/.obassh_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, f"ssh_tunnel_{session_id}.log")
+        # Write the executed command at the top
+        with open(log_path, "w") as logfile:
+            logfile.write(f"Executed command: {command}\n")
+            logfile.write("="*80 + "\n\n")
         with self.suspend():
-            subprocess.run(shlex.split(command), check=False)  # noqa: S603
-        print(f"SSH command: {command}")
-        self.exit("thanks for using obassh")
+            # Open logfile for append for redirection
+            logfile = open(log_path, "a")
+            process = subprocess.Popen(  # noqa: S603  # pylint: disable=consider-using-with
+                shlex.split(command),
+                stdout=logfile,
+                stderr=logfile,
+                start_new_session=True,
+            )
+        # Assign pid and logfile to the session object for persistence
+        selected.pid = process.pid
+        selected.logfile_path = log_path
+        self._state.ssh_processes[session_id] = process.pid
+        self._sessions.refresh_session_rows()
+        self.query_one("#session-selection", Static).update(
+            f"SSH command started in background (pid {process.pid}) - log: {log_path}"
+        )
 
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, cast
@@ -43,7 +44,17 @@ class SessionController:
         table = cast(DataTable[str], self._app.query_one("#session-table", DataTable))
         table.border_title = "Bastion Sessions"
         table.cursor_type = "row"
-        table.add_columns("Type", "Target Resource", "Target Port", "State", "TTL", "Created")
+        table.add_columns(
+            "Type",
+            "Target Resource",
+            "Target Port",
+            "State",
+            "SSH session",
+            "TTL",
+            "Created",
+            "PID",
+            "Logfile",
+        )
 
     def refresh_sessions_from_oci(self) -> None:
         profile = self._selected_profile()
@@ -68,6 +79,7 @@ class SessionController:
         table = cast(DataTable[str], self._app.query_one("#session-table", DataTable))
         table.clear(columns=False)
         for session in self._state.sessions:
+            ssh_running = self._is_ssh_session_running(session.ocid)
             ttl = max(session.ttl_seconds, 0)
             created = session.started_at
             if created is None:
@@ -81,10 +93,24 @@ class SessionController:
                 session.target_resource,
                 str(session.target_port),
                 session.state.value,
+                "running" if ssh_running else "not running",
                 str(ttl),
                 created_label,
+                str(session.pid) if session.pid else "-",
+                session.logfile_path if session.logfile_path else "-",
                 key=session.ocid,
             )
+
+    def _is_ssh_session_running(self, session_id: str) -> bool:
+        pid = self._state.ssh_processes.get(session_id)
+        if pid is None:
+            return False
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            self._state.ssh_processes.pop(session_id, None)
+            return False
+        return True
 
     def selected_session(self) -> BastionSession | None:
         if self._state.selected_session_id is None:

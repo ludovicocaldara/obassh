@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 from obassh.domain.models import BastionSession, OciProfileRef
 
@@ -19,3 +20,5 @@ class AppState:
     preferred_private_key_path: str = ""
     sessions: list[BastionSession] = field(default_factory=list)
     selected_session_id: str | None = None
+    ssh_processes: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    pending_execution_session_id: str | None = None
