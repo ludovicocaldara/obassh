@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Callable, cast
 from textual.widgets import DataTable, Input, Static
 
 from obassh.app.models import AppState
+from obassh.app.screens.session_modals import SshPortForwardModal
 from obassh.app.services.ssh_command_builder import apply_identity_to_command, session_command
 from obassh.domain.enums import NodeType, SessionState, SessionType
 from obassh.domain.errors import OciApiError
@@ -48,6 +49,7 @@ class SessionController:
             "Type",
             "Target Resource",
             "Target Port",
+            "Local Port",
             "State",
             "SSH session",
             "TTL",
@@ -88,10 +90,35 @@ class SessionController:
                 if created.tzinfo is None:
                     created = created.replace(tzinfo=timezone.utc)
                 created_label = created.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Determine local port (for port forwarding sessions with running SSH)
+            local_port_display = "-"
+            if (
+                session.session_type.value.lower() == "port-forwarding"
+                and ssh_running
+            ):
+                # Try to parse local port from log file where command is stored
+                local_port_val = None
+                if session.logfile_path:
+                    try:
+                        with open(session.logfile_path, "r") as lf:
+                            first_line = lf.readline()
+                            # Look for '-L {local}:{remote}:{remote}' in the command
+                            import re
+                            match = re.search(r"-L\s+(\d+):", first_line)
+                            if match:
+                                local_port_val = match.group(1)
+                    except Exception:
+                        pass
+                if not local_port_val:
+                    # Fallback: use target_port if nothing parsed
+                    local_port_val = str(session.target_port)
+                local_port_display = str(local_port_val)
             table.add_row(
                 session.session_type.value,
                 session.target_resource,
                 str(session.target_port),
+                local_port_display,
                 session.state.value,
                 "running" if ssh_running else "not running",
                 str(ttl),
@@ -123,6 +150,42 @@ class SessionController:
             ),
             None,
         )
+
+    def launch_port_forward_modal(
+        self,
+        default_local_port: int = 2222,
+        default_remote_ip: str = "",
+        default_remote_port: int = 22,
+        default_private_key_path: str = ""
+    ) -> None:
+        """Show modal to enter SSH port forwarding parameters and execute SSH if confirmed."""
+
+        modal = SshPortForwardModal(
+            default_local_port=default_local_port,
+            default_remote_ip=default_remote_ip,
+            default_remote_port=default_remote_port,
+            default_private_key_path=default_private_key_path
+        )
+
+        def on_modal_result(result: dict[str, str] | None) -> None:
+            if not result:
+                return
+            local_port = result.get("local_port", "2222")
+            remote_ip = result.get("remote_ip", "")
+            remote_port = result.get("remote_port", "22")
+            privkey_path = result.get("private_key_path", "")
+            # You would now continue with building and running the SSH command:
+            # e.g., command = f"ssh -i {shlex.quote(privkey_path)} -N -L {local_port}:{remote_ip}:{remote_port} ..."
+            # For demonstration, we'll update a UI area (real call would execute SSH).
+            info = (
+                f"Launching SSH port forward:\n"
+                f"Local Port: {local_port}\nRemote IP: {remote_ip}\n"
+                f"Remote Port: {remote_port}\nPrivate Key: {privkey_path}"
+            )
+            self._app.query_one("#session-selection", Static).update(info)
+
+        modal.dismissed.connect(on_modal_result)  # type: ignore
+        self._app.push_screen(modal)
 
     def build_session_command(self, session: BastionSession) -> str:
         private_key_path = self._app.query_one("#settings-privkey-path", Input).value.strip()

@@ -42,6 +42,64 @@ class CreateSessionModal(ModalScreen[dict[str, str] | None]):
         self.dismiss({"target": target, "port": port, "ttl": ttl})
 
 
+class SshPortForwardModal(ModalScreen[dict[str, str] | None]):
+    """Modal form for interactively entering SSH port forwarding parameters."""
+
+    def __init__(
+        self,
+        default_local_port: int = 2222,
+        default_remote_ip: str = "",
+        default_remote_port: int = 22,
+        default_private_key_path: str = ""
+    ) -> None:
+        super().__init__()
+        self._default_local_port = str(default_local_port)
+        self._default_remote_ip = default_remote_ip
+        self._default_remote_port = str(default_remote_port)
+        self._default_private_key_path = default_private_key_path
+
+    def compose(self) -> ComposeResult:
+        with Container(id="session-modal"):
+            yield Label("SSH Port Forward Parameters", id="session-modal-title")
+            yield Input(
+                value=self._default_local_port,
+                placeholder="Local Port (default: 2222)",
+                id="local-port"
+            )
+            yield Input(
+                value=self._default_remote_ip,
+                placeholder="Remote IP / Hostname",
+                id="remote-ip"
+            )
+            yield Input(
+                value=self._default_remote_port,
+                placeholder="Remote Port",
+                id="remote-port"
+            )
+            yield Input(
+                value=self._default_private_key_path,
+                placeholder="Private Key Path",
+                id="private-key-path"
+            )
+            with Container(id="session-modal-actions"):
+                yield Button("Connect", variant="primary", id="session-connect")
+                yield Button("Cancel", id="session-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "session-cancel":
+            self.dismiss(None)
+            return
+        local_port = self.query_one("#local-port", Input).value.strip() or "2222"
+        remote_ip = self.query_one("#remote-ip", Input).value.strip()
+        remote_port = self.query_one("#remote-port", Input).value.strip() or "22"
+        private_key_path = self.query_one("#private-key-path", Input).value.strip()
+        self.dismiss({
+            "local_port": local_port,
+            "remote_ip": remote_ip,
+            "remote_port": remote_port,
+            "private_key_path": private_key_path
+        })
+
 class CommandEditModal(ModalScreen[str | None]):
     """Modal to view/edit command before execution."""
 

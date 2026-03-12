@@ -26,7 +26,7 @@ from textual.widgets import (
 from obassh.app.controllers.profile_targets_controller import ProfileTargetsController
 from obassh.app.controllers.session_controller import SessionController
 from obassh.app.models import AppState
-from obassh.app.screens.session_modals import CommandEditModal, CreateSessionModal
+from obassh.app.screens.session_modals import CommandEditModal, CreateSessionModal, SshPortForwardModal
 from obassh.domain.enums import SessionState, SessionType
 from obassh.providers.oci import OciBastionSessionProvider
 from obassh.providers.oci.inventory_provider import OciInventoryProvider
@@ -223,9 +223,32 @@ class ObasshApp(App[str | None]):
                 f"Session {selected.ocid} is not ACTIVE ({selected.state.value})"
             )
             return
-        command = self._sessions.build_session_command(selected)
         self._state.pending_execution_session_id = selected.ocid
-        self.push_screen(CommandEditModal(command), self._execute_ssh_command)
+        if selected.session_type == SessionType.PORT_FORWARDING:
+            modal = SshPortForwardModal(
+                default_local_port=2222,
+                default_remote_ip=selected.target_resource,
+                default_remote_port=selected.target_port if hasattr(selected, "target_port") else 22,
+                default_private_key_path=self._state.preferred_private_key_path,
+            )
+
+            def on_modal_result(result: dict[str, str] | None) -> None:
+                if not result:
+                    return
+                # Build the SSH command using the modal values:
+                local_port = result.get("local_port", "2222")
+                remote_ip = result.get("remote_ip", "")
+                remote_port = result.get("remote_port", "22")
+                privkey_path = result.get("private_key_path", "")
+                command = (
+                    f"ssh -i {shlex.quote(privkey_path)} -N -L "
+                    f"{local_port}:{remote_ip}:{remote_port} {selected.ocid}@{selected.target_resource}"
+                )
+                self._execute_ssh_command(command)
+            self.push_screen(modal, on_modal_result)
+        else:
+            command = self._sessions.build_session_command(selected)
+            self.push_screen(CommandEditModal(command), self._execute_ssh_command)
 
     def action_execute_direct(self) -> None:
         selected = self._sessions.selected_session()
@@ -236,9 +259,31 @@ class ObasshApp(App[str | None]):
                 f"Session {selected.ocid} is not ACTIVE ({selected.state.value})"
             )
             return
-        command = self._sessions.build_session_command(selected)
         self._state.pending_execution_session_id = selected.ocid
-        self.push_screen(CommandEditModal(command), self._execute_ssh_command)
+        if selected.session_type == SessionType.PORT_FORWARDING:
+            modal = SshPortForwardModal(
+                default_local_port=2222,
+                default_remote_ip=selected.target_resource,
+                default_remote_port=selected.target_port if hasattr(selected, "target_port") else 22,
+                default_private_key_path=self._state.preferred_private_key_path,
+            )
+
+            def on_modal_result(result: dict[str, str] | None) -> None:
+                if not result:
+                    return
+                local_port = result.get("local_port", "2222")
+                remote_ip = result.get("remote_ip", "")
+                remote_port = result.get("remote_port", "22")
+                privkey_path = result.get("private_key_path", "")
+                command = (
+                    f"ssh -i {shlex.quote(privkey_path)} -N -L "
+                    f"{local_port}:{remote_ip}:{remote_port} {selected.ocid}@{selected.target_resource}"
+                )
+                self._execute_ssh_command(command)
+            self.push_screen(modal, on_modal_result)
+        else:
+            command = self._sessions.build_session_command(selected)
+            self.push_screen(CommandEditModal(command), self._execute_ssh_command)
 
     def action_kill_port_forward(self) -> None:
         selected = self._sessions.selected_session()
