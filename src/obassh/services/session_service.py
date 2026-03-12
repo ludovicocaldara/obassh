@@ -15,7 +15,7 @@ class SessionService:
         bastion_ocid: str,
         target: TargetNode,
         ssh_public_key: str,
-        ttl_seconds: int = 3600,
+        ttl_seconds: int = 7200,
         session_type: SessionType = SessionType.MANAGED_SSH,
         target_port: int = 22,
     ) -> BastionSession:

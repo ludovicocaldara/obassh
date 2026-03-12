@@ -27,7 +27,7 @@ class CreateSessionModal(ModalScreen[dict[str, str] | None]):
                 id="session-target",
             )
             yield Input(value="22", placeholder="Target Port", id="session-port")
-            yield Input(value="3600", placeholder="TTL (seconds)", id="session-ttl")
+            yield Input(value="7200", placeholder="TTL (seconds)", id="session-ttl")
             with Container(id="session-modal-actions"):
                 yield Button("Create", variant="primary", id="session-create")
                 yield Button("Cancel", id="session-cancel")
@@ -38,7 +38,7 @@ class CreateSessionModal(ModalScreen[dict[str, str] | None]):
             return
         target = self.query_one("#session-target", Input).value.strip()
         port = self.query_one("#session-port", Input).value.strip() or "22"
-        ttl = self.query_one("#session-ttl", Input).value.strip() or "3600"
+        ttl = self.query_one("#session-ttl", Input).value.strip() or "7200"
         self.dismiss({"target": target, "port": port, "ttl": ttl})
 
 

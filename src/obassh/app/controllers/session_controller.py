@@ -185,7 +185,7 @@ class SessionController:
 
         try:
             port = int(form_data["port"] or "22")
-            ttl = int(form_data["ttl"] or "3600")
+            ttl = int(form_data["ttl"] or "7200")
         except ValueError:
             self._app.query_one("#session-selection", Static).update(
                 "Invalid numeric input for port/ttl"
