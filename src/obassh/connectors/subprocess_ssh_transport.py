@@ -48,8 +48,11 @@ class SubprocessSshTransport:
                     f"-p {bastion_port} opc@{bastion_host}"
                 ),
             ])
-
-        command.append(f"{request.profile.ssh_user}@{request.target.ip_or_fqdn}")
+            # Connect directly to the bastion for the outer SSH
+            command.append(f"{request.profile.ssh_user}@{bastion_host}")
+        else:
+            # No bastion, connect directly to the target
+            command.append(f"{request.profile.ssh_user}@{request.target.ip_or_fqdn}")
         return command
 
     def start(self, command: list[str], logfile_path: str, header_text: str) -> ProcessHandle:

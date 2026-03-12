@@ -187,13 +187,32 @@ class SessionController:
         modal.dismissed.connect(on_modal_result)  # type: ignore
         self._app.push_screen(modal)
 
-    def build_session_command(self, session: BastionSession) -> str:
+    def build_session_command(self, session: BastionSession, internal_target_ip: str = "") -> str:
         private_key_path = self._app.query_one("#settings-privkey-path", Input).value.strip()
+        resolved_internal_target_ip: str = internal_target_ip
+        # For port forwarding, attempt to resolve internal target IP from known TargetNode state if not already provided
+        if not internal_target_ip and session.session_type.value.lower() == "port-forwarding":
+            # Find matching TargetNode from session.target_resource (if mapping available)
+            target_ip: str = ""
+            if hasattr(self._state, "targets") and hasattr(self._state.targets, "get"):
+                # Assuming self._state.targets maps id/ocid/resource to TargetNode
+                target = self._state.targets.get(session.target_resource)
+                if target and hasattr(target, "ip_or_fqdn"):
+                    target_ip = str(target.ip_or_fqdn)
+            # Only use a valid internal IP or FQDN (not the bastion host itself and not an empty string)
+            if target_ip and "bastion" not in target_ip and str(target_ip).strip():
+                resolved_target: str = str(target_ip)
+            else:
+                # Default to empty string to force _port_forward_command to use its own resolution/fallbacks,
+                # and avoid using session.target_resource which may be wrong (public/bastion host)
+                resolved_target: str = ""
+            resolved_internal_target_ip = resolved_target
         return session_command(
             session,
-            private_key_path,
+            str(private_key_path),
             self._selected_profile(),
             self._provider,
+            str(resolved_internal_target_ip),
         )
 
     def update_selected_session_label(self, session_id: str) -> None:

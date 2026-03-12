@@ -63,8 +63,17 @@ def session_command(
     private_key_path: str,
     profile: OciProfileRef | None,
     provider: OciBastionSessionProvider,
+    internal_target_ip: str = "",
 ) -> str:
-    """Build the best-effort SSH command for a bastion session."""
+    """Build the best-effort SSH command for a bastion session.
+
+    Args:
+        session: BastionSession object
+        private_key_path: path to SSH private key
+        profile: OCI profile
+        provider: Bastion session provider
+        internal_target_ip: The true internal target's IP or FQDN for port forwarding
+    """
     metadata_command = session.ssh_metadata.get("command", "")
 
     if (
@@ -81,7 +90,7 @@ def session_command(
             pass
 
     if session.session_type is SessionType.PORT_FORWARDING:
-        return _port_forward_command(session, private_key_path, profile, metadata_command)
+        return _port_forward_command(session, private_key_path, profile, metadata_command, internal_target_ip)
     if session.session_type is SessionType.SOCKS5:
         return _socks5_command(session, private_key_path, profile, metadata_command)
 
@@ -110,6 +119,7 @@ def _port_forward_command(
     private_key_path: str,
     profile: OciProfileRef | None,
     metadata_command: str,
+    internal_target_ip: str = "",
 ) -> str:
     bastion_host = _resolve_bastion_host(
         metadata_command,
@@ -118,13 +128,15 @@ def _port_forward_command(
     )
     bastion_port = session.ssh_metadata.get("bastion_port", "22")
     local_port = extract_local_port(metadata_command, session.target_port)
+    # Use explicit internal_target_ip if specified, otherwise fallback to previous behavior
+    target_host = internal_target_ip or session.target_resource
     if not bastion_host:
         return session.ssh_metadata.get(
-            "command", f"ssh -i {private_key_path} opc@{session.target_resource}"
+            "command", f"ssh -i {private_key_path} opc@{target_host}"
         )
     return (
         f"ssh -i {shlex.quote(private_key_path)} "
-        f"-N -L {local_port}:{session.target_resource}:{session.target_port} "
+        f"-N -L {local_port}:{target_host}:{session.target_port} "
         f"-p {bastion_port} {session.ocid}@{bastion_host}"
     )
 
