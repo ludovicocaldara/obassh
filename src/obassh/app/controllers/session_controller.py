@@ -10,8 +10,11 @@ from typing import TYPE_CHECKING, Callable, cast
 from textual.widgets import DataTable, Input, Static
 
 from obassh.app.models import AppState
-from obassh.app.screens.session_modals import SshPortForwardModal
-from obassh.app.services.ssh_command_builder import apply_identity_to_command, session_command
+from obassh.app.services.ssh_command_builder import (
+    apply_identity_to_command,
+    extract_local_port,
+    session_command,
+)
 from obassh.domain.enums import NodeType, SessionState, SessionType
 from obassh.domain.errors import OciApiError
 from obassh.domain.models import BastionSession, OciProfileRef, TargetNode
@@ -82,6 +85,16 @@ class SessionController:
         table.clear(columns=False)
         for session in self._state.sessions:
             ssh_running = self._is_ssh_session_running(session.ocid)
+            local_port = "-"
+            if session.session_type is SessionType.PORT_FORWARDING:
+                local_port = str(
+                    extract_local_port(
+                        session.ssh_metadata.get("command", ""),
+                        session.target_port,
+                    )
+                )
+                if session.ssh_metadata.get("local_port"):
+                    local_port = session.ssh_metadata["local_port"]
             ttl = max(session.ttl_seconds, 0)
             created = session.started_at
             if created is None:
@@ -90,35 +103,11 @@ class SessionController:
                 if created.tzinfo is None:
                     created = created.replace(tzinfo=timezone.utc)
                 created_label = created.astimezone().strftime("%Y-%m-%d %H:%M:%S")
-
-            # Determine local port (for port forwarding sessions with running SSH)
-            local_port_display = "-"
-            if (
-                session.session_type.value.lower() == "port-forwarding"
-                and ssh_running
-            ):
-                # Try to parse local port from log file where command is stored
-                local_port_val = None
-                if session.logfile_path:
-                    try:
-                        with open(session.logfile_path, "r") as lf:
-                            first_line = lf.readline()
-                            # Look for '-L {local}:{remote}:{remote}' in the command
-                            import re
-                            match = re.search(r"-L\s+(\d+):", first_line)
-                            if match:
-                                local_port_val = match.group(1)
-                    except Exception:
-                        pass
-                if not local_port_val:
-                    # Fallback: use target_port if nothing parsed
-                    local_port_val = str(session.target_port)
-                local_port_display = str(local_port_val)
             table.add_row(
                 session.session_type.value,
                 session.target_resource,
                 str(session.target_port),
-                local_port_display,
+                local_port,
                 session.state.value,
                 "running" if ssh_running else "not running",
                 str(ttl),
@@ -151,68 +140,13 @@ class SessionController:
             None,
         )
 
-    def launch_port_forward_modal(
-        self,
-        default_local_port: int = 2222,
-        default_remote_ip: str = "",
-        default_remote_port: int = 22,
-        default_private_key_path: str = ""
-    ) -> None:
-        """Show modal to enter SSH port forwarding parameters and execute SSH if confirmed."""
-
-        modal = SshPortForwardModal(
-            default_local_port=default_local_port,
-            default_remote_ip=default_remote_ip,
-            default_remote_port=default_remote_port,
-            default_private_key_path=default_private_key_path
-        )
-
-        def on_modal_result(result: dict[str, str] | None) -> None:
-            if not result:
-                return
-            local_port = result.get("local_port", "2222")
-            remote_ip = result.get("remote_ip", "")
-            remote_port = result.get("remote_port", "22")
-            privkey_path = result.get("private_key_path", "")
-            # You would now continue with building and running the SSH command:
-            # e.g., command = f"ssh -i {shlex.quote(privkey_path)} -N -L {local_port}:{remote_ip}:{remote_port} ..."
-            # For demonstration, we'll update a UI area (real call would execute SSH).
-            info = (
-                f"Launching SSH port forward:\n"
-                f"Local Port: {local_port}\nRemote IP: {remote_ip}\n"
-                f"Remote Port: {remote_port}\nPrivate Key: {privkey_path}"
-            )
-            self._app.query_one("#session-selection", Static).update(info)
-
-        modal.dismissed.connect(on_modal_result)  # type: ignore
-        self._app.push_screen(modal)
-
-    def build_session_command(self, session: BastionSession, internal_target_ip: str = "") -> str:
+    def build_session_command(self, session: BastionSession) -> str:
         private_key_path = self._app.query_one("#settings-privkey-path", Input).value.strip()
-        resolved_internal_target_ip: str = internal_target_ip
-        # For port forwarding, attempt to resolve internal target IP from known TargetNode state if not already provided
-        if not internal_target_ip and session.session_type.value.lower() == "port-forwarding":
-            # Find matching TargetNode from session.target_resource (if mapping available)
-            target_ip: str = ""
-            if hasattr(self._state, "targets") and hasattr(self._state.targets, "get"):
-                # Assuming self._state.targets maps id/ocid/resource to TargetNode
-                target = self._state.targets.get(session.target_resource)
-                if target and hasattr(target, "ip_or_fqdn"):
-                    target_ip = str(target.ip_or_fqdn)
-            # Only use a valid internal IP or FQDN (not the bastion host itself and not an empty string)
-            if target_ip and "bastion" not in target_ip and str(target_ip).strip():
-                resolved_target: str = str(target_ip)
-            else:
-                # Default to empty string to force _port_forward_command to use its own resolution/fallbacks,
-                # and avoid using session.target_resource which may be wrong (public/bastion host)
-                resolved_target: str = ""
-            resolved_internal_target_ip = resolved_target
         return session_command(
             session,
-            str(private_key_path),
+            private_key_path,
             self._selected_profile(),
             self._provider,
-            str(resolved_internal_target_ip),
         )
 
     def update_selected_session_label(self, session_id: str) -> None:

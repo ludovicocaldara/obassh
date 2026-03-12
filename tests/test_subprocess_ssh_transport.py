@@ -64,8 +64,14 @@ def test_build_command_contains_expected_parts() -> None:
     command = transport.build_command(_request())
 
     assert command[0] == "ssh"
+    assert "StrictHostKeyChecking=accept-new" in command
+    assert "UserKnownHostsFile=/dev/null" in command
+    assert "GlobalKnownHostsFile=/dev/null" in command
     assert "-L" in command
-    assert any("ProxyCommand=" in token for token in command)
+    proxy_command = next(token for token in command if token.startswith("ProxyCommand="))
+    assert "StrictHostKeyChecking=accept-new" in proxy_command
+    assert "UserKnownHostsFile=/dev/null" in proxy_command
+    assert "GlobalKnownHostsFile=/dev/null" in proxy_command
     assert command[-1] == "opc@10.0.0.10"
 
 
@@ -76,7 +82,7 @@ def test_start_returns_process_handle(mock_popen: Mock) -> None:
     mock_popen.return_value = process
     transport = SubprocessSshTransport()
 
-    handle = transport.start(["ssh", "host"])
+    handle = transport.start(["ssh", "host"], "/tmp/obassh-test.log", "header")
 
     assert isinstance(handle, ProcessHandle)
     assert handle.pid == 999
@@ -87,6 +93,6 @@ def test_start_raises_ssh_execution_error_on_oserror(mock_popen: Mock) -> None:
     transport = SubprocessSshTransport()
 
     with pytest.raises(SshExecutionError):
-        transport.start(["ssh", "host"])
+        transport.start(["ssh", "host"], "/tmp/obassh-test.log", "header")
 
     assert mock_popen.called

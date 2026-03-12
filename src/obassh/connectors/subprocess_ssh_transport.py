@@ -44,7 +44,11 @@ class SubprocessSshTransport:
                 "-o",
                 (
                     "ProxyCommand="
-                    f"ssh -i {request.profile.private_key_path} -W %h:%p "
+                    f"ssh -i {request.profile.private_key_path} "
+                    "-o StrictHostKeyChecking=accept-new "
+                    "-o UserKnownHostsFile=/dev/null "
+                    "-o GlobalKnownHostsFile=/dev/null "
+                    "-W %h:%p "
                     f"-p {bastion_port} opc@{bastion_host}"
                 ),
             ])

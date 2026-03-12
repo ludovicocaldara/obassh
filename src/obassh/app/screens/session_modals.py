@@ -120,3 +120,35 @@ class CommandEditModal(ModalScreen[str | None]):
             self.dismiss(None)
             return
         self.dismiss(self.query_one("#session-command-edit", Input).value.strip())
+
+
+class PortForwardEditModal(ModalScreen[dict[str, str] | None]):
+    """Modal to edit port-forward execution parameters."""
+
+    def __init__(self, local_port: int, remote_port: int, remote_ip: str) -> None:
+        super().__init__()
+        self._local_port = str(local_port)
+        self._remote_port = str(remote_port)
+        self._remote_ip = remote_ip
+
+    def compose(self) -> ComposeResult:
+        with Container(id="session-modal"):
+            yield Label("Edit Port Forward", id="session-modal-title")
+            yield Input(value=self._local_port, placeholder="Local Port", id="pf-local-port")
+            yield Input(value=self._remote_port, placeholder="Remote Port", id="pf-remote-port")
+            yield Input(value=self._remote_ip, placeholder="Remote IP", id="pf-remote-ip")
+            with Container(id="session-modal-actions"):
+                yield Button("Execute", variant="primary", id="session-exec")
+                yield Button("Cancel", id="session-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "session-cancel":
+            self.dismiss(None)
+            return
+        self.dismiss(
+            {
+                "local_port": self.query_one("#pf-local-port", Input).value.strip(),
+                "remote_port": self.query_one("#pf-remote-port", Input).value.strip(),
+                "remote_ip": self.query_one("#pf-remote-ip", Input).value.strip(),
+            }
+        )
