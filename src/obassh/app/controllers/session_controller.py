@@ -73,7 +73,9 @@ class SessionController:
             fresh_sessions = [
                 session for session in sessions if session.state != SessionState.DELETED
             ]
-            self._state.sessions = self._merge_runtime_session_data(fresh_sessions)
+            merged_sessions = self._merge_runtime_session_data(fresh_sessions)
+            self._reconcile_ssh_runtime_state(merged_sessions)
+            self._state.sessions = merged_sessions
         except OciApiError as exc:  # pragma: no cover
             self._app.query_one("#session-selection", Static).update(
                 f"Failed loading sessions: {exc}"
@@ -156,13 +158,42 @@ class SessionController:
     def _is_ssh_session_running(self, session_id: str) -> bool:
         pid = self._state.ssh_processes.get(session_id)
         if pid is None:
+            session = next(
+                (item for item in self._state.sessions if item.ocid == session_id),
+                None,
+            )
+            pid = session.pid if session is not None else None
+        if pid is None:
             return False
         try:
             os.kill(pid, 0)
         except OSError:
             self._state.ssh_processes.pop(session_id, None)
+            session = next(
+                (item for item in self._state.sessions if item.ocid == session_id),
+                None,
+            )
+            if session is not None:
+                session.pid = None
             return False
         return True
+
+    def _reconcile_ssh_runtime_state(self, sessions: list[BastionSession]) -> None:
+        """Sync PID map/session PID fields with real process liveness after refresh."""
+        for session in sessions:
+            pid = session.pid or self._state.ssh_processes.get(session.ocid)
+            if pid is None:
+                self._state.ssh_processes.pop(session.ocid, None)
+                session.pid = None
+                continue
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                self._state.ssh_processes.pop(session.ocid, None)
+                session.pid = None
+                continue
+            session.pid = pid
+            self._state.ssh_processes[session.ocid] = pid
 
     def selected_session(self) -> BastionSession | None:
         if self._state.selected_session_id is None:

@@ -13,6 +13,7 @@ from obassh.providers.oci import OciBastionSessionProvider  # pylint: disable=im
 
 _DEFAULT_SSH_OPTIONS = {
     "StrictHostKeyChecking": "accept-new",
+    "ServerAliveInterval": "30",
     "UserKnownHostsFile": "/dev/null",
     "GlobalKnownHostsFile": "/dev/null",
 }

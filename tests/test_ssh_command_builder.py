@@ -46,8 +46,9 @@ def test_session_command_builds_sock5_command_with_bastion_host_and_dynamic_port
     )
 
     assert command == (
-        "ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null "
-        "-o GlobalKnownHostsFile=/dev/null -i /tmp/id_rsa -N -D 127.0.0.1:2022 -p 22 "
+        "ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 "
+        "-o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null "
+        "-i /tmp/id_rsa -N -D 127.0.0.1:2022 -p 22 "
         "ocid1.bastionsession.oc1.uk-london-1."
         "amaaaaaaknuwtjiapxsbqrzrngcg6tmphpdnuwmsrf7uztp2mmwinnbidxrq@"
         "host.bastion.uk-london-1.oci.oraclecloud.com"
@@ -75,6 +76,7 @@ def test_session_command_injects_default_ssh_options_into_proxy_command() -> Non
     )
 
     assert "-o StrictHostKeyChecking=accept-new" in command
+    assert "-o ServerAliveInterval=30" in command
     assert "-o UserKnownHostsFile=/dev/null" in command
     assert "-o GlobalKnownHostsFile=/dev/null" in command
     parts = shlex.split(command)
@@ -85,5 +87,6 @@ def test_session_command_injects_default_ssh_options_into_proxy_command() -> Non
     )
     proxy_command = proxy_token.split("=", 1)[1]
     assert "-o StrictHostKeyChecking=accept-new" in proxy_command
+    assert "-o ServerAliveInterval=30" in proxy_command
     assert "-o UserKnownHostsFile=/dev/null" in proxy_command
     assert "-o GlobalKnownHostsFile=/dev/null" in proxy_command

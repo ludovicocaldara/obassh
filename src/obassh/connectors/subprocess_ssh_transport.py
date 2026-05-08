@@ -46,6 +46,7 @@ class SubprocessSshTransport:
                     "ProxyCommand="
                     f"ssh -i {request.profile.private_key_path} "
                     "-o StrictHostKeyChecking=accept-new "
+                    "-o ServerAliveInterval=30 "
                     "-o UserKnownHostsFile=/dev/null "
                     "-o GlobalKnownHostsFile=/dev/null "
                     "-W %h:%p "

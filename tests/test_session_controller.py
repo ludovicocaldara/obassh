@@ -1,4 +1,5 @@
 from typing import Any, cast
+from unittest.mock import patch
 
 from textual.app import App
 
@@ -91,3 +92,37 @@ def test_merge_runtime_session_data_uses_pid_from_runtime_map_for_new_session() 
     merged = cast(Any, controller)._merge_runtime_session_data([fresh])
 
     assert merged[0].pid == 7777
+
+
+def test_reconcile_ssh_runtime_state_clears_dead_pid() -> None:
+    session = BastionSession(
+        ocid="s3",
+        state=SessionState.ACTIVE,
+        expires_at=None,
+        pid=8888,
+    )
+    state = AppState(sessions=[session], ssh_processes={"s3": 8888})
+    controller = _controller_with_state(state)
+
+    with patch("obassh.app.controllers.session_controller.os.kill", side_effect=OSError):
+        cast(Any, controller)._reconcile_ssh_runtime_state([session])
+
+    assert session.pid is None
+    assert "s3" not in state.ssh_processes
+
+
+def test_reconcile_ssh_runtime_state_keeps_alive_pid_and_updates_map() -> None:
+    session = BastionSession(
+        ocid="s4",
+        state=SessionState.ACTIVE,
+        expires_at=None,
+        pid=7777,
+    )
+    state = AppState(sessions=[session], ssh_processes={})
+    controller = _controller_with_state(state)
+
+    with patch("obassh.app.controllers.session_controller.os.kill"):
+        cast(Any, controller)._reconcile_ssh_runtime_state([session])
+
+    assert session.pid == 7777
+    assert state.ssh_processes["s4"] == 7777

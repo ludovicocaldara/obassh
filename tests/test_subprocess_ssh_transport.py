@@ -65,14 +65,16 @@ def test_build_command_contains_expected_parts() -> None:
 
     assert command[0] == "ssh"
     assert "StrictHostKeyChecking=accept-new" in command
+    assert "ServerAliveInterval=30" in command
     assert "UserKnownHostsFile=/dev/null" in command
     assert "GlobalKnownHostsFile=/dev/null" in command
     assert "-L" in command
     proxy_command = next(token for token in command if token.startswith("ProxyCommand="))
     assert "StrictHostKeyChecking=accept-new" in proxy_command
+    assert "ServerAliveInterval=30" in proxy_command
     assert "UserKnownHostsFile=/dev/null" in proxy_command
     assert "GlobalKnownHostsFile=/dev/null" in proxy_command
-    assert command[-1] == "opc@10.0.0.10"
+    assert command[-1] == "opc@bastion.example"
 
 
 @patch("obassh.connectors.subprocess_ssh_transport.subprocess.Popen")
