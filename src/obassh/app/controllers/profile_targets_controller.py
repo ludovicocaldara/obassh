@@ -37,12 +37,18 @@ class ProfileTargetsController:
             None,
         )
 
+    def _compartment_id_for_profile(self, profile_name: str) -> str:
+        profile = next((p for p in self._state.profiles if p.name == profile_name), None)
+        if profile is not None and profile.compartment_ocid:
+            return profile.compartment_ocid
+        return self._inventory.default_compartment_id()
+
     def ensure_single_bastion(self, profile_name: str) -> bool:
         bastion_override = self._app.query_one("#settings-bastion-ocid", Input).value.strip()
         if bastion_override:
             self._state.selected_bastion_ocid = bastion_override
             return True
-        compartment_id = self._inventory.default_compartment_id()
+        compartment_id = self._compartment_id_for_profile(profile_name)
         if not compartment_id:
             self._update_status("No compartment set for bastion discovery")
             return False
@@ -67,13 +73,19 @@ class ProfileTargetsController:
         )
         compute_table.border_title = "Compute Nodes"
         compute_table.cursor_type = "row"
-        compute_table.add_columns("Name", "State", "DNS Name", "Private IP")
+        compute_table.add_columns("Name", "State", "DNS Name", "Private IP", "Public IP")
 
         db_table = cast(DataTable[str], self._app.query_one("#targets-db-table", DataTable))
         db_table.border_title = "DBSystem DB Nodes"
         db_table.cursor_type = "row"
         db_table.add_columns(
-            "DBSystem", "Version", "DBNode", "State", "DNS Name", "Private IP"
+            "DBSystem",
+            "Version",
+            "DBNode",
+            "State",
+            "DNS Name",
+            "Private IP",
+            "Public IP",
         )
 
     def load_profiles(self) -> None:
@@ -104,7 +116,7 @@ class ProfileTargetsController:
             )
 
     def load_targets_for_profile(self, profile_name: str) -> None:
-        compartment_id = self._inventory.default_compartment_id()
+        compartment_id = self._compartment_id_for_profile(profile_name)
         compute_table = cast(
             DataTable[str],
             self._app.query_one("#targets-compute-table", DataTable),
@@ -130,7 +142,11 @@ class ProfileTargetsController:
 
         for row in compute_nodes:
             compute_table.add_row(
-                row["name"], row["state"], row["dns_name"], row["private_ip"]
+                row["name"],
+                row["state"],
+                row["dns_name"],
+                row["private_ip"],
+                row.get("public_ip", ""),
             )
         for row in db_nodes:
             db_table.add_row(
@@ -140,6 +156,7 @@ class ProfileTargetsController:
                 row["state"],
                 row["dns_name"],
                 row["private_ip"],
+                row.get("public_ip", ""),
             )
 
         self._app.query_one("#targets-selection", Static).update(

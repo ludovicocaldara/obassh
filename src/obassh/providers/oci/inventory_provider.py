@@ -34,23 +34,16 @@ class OciInventoryProvider:
         profiles: list[OciProfileRef] = []
         profile_names: list[str] = ["DEFAULT", *list(parser.sections())]
 
-        default_compartment = self._compartment_from_cli_rc(cli_parser, "DEFAULT")
-
         try:
             for profile_name in profile_names:
                 config = cast(
                     dict[str, Any],
                     oci.config.from_file(self._config_path, profile_name),
                 )
-                # Compartment priority for each profile:
-                # 1) COMPID environment variable (highest priority)
-                # 2) Profile-specific compartment-id in oci_cli_rc ([PROFILE <name>] or [<name>])
-                # 3) DEFAULT compartment-id in oci_cli_rc
-                compartment_ocid = (
-                    os.getenv("COMPID", "")
-                    or self._compartment_from_cli_rc(cli_parser, profile_name)
-                    or default_compartment
-                )
+                # For the Profiles table, show the compartment explicitly configured
+                # for that profile. Do not stamp global COMPID / DEFAULT fallback onto
+                # every row; fallback remains available when targets are loaded.
+                compartment_ocid = self._compartment_from_cli_rc(cli_parser, profile_name)
                 profiles.append(
                     OciProfileRef(
                         name=profile_name,
@@ -78,8 +71,20 @@ class OciInventoryProvider:
 
     def _compartment_from_cli_rc(self, parser: ConfigParser, profile_name: str) -> str:
         for section_name in (profile_name, f"PROFILE {profile_name}"):
-            if parser.has_section(section_name):
-                compartment_id = parser.get(section_name, "compartment-id", fallback="").strip()
+            if section_name == parser.default_section:
+                compartment_id = parser.defaults().get("compartment-id", "").strip()
+                if compartment_id:
+                    return compartment_id
+                continue
+
+            explicit_sections = cast(dict[str, dict[str, str]], getattr(parser, "_sections", {}))
+            section_values = explicit_sections.get(section_name, {})
+            if "compartment-id" in section_values:
+                # Use the section's explicit mapping instead of parser.get(...),
+                # parser.has_option(...), or parser[section].get(...). Those APIs
+                # inherit [DEFAULT] values and make every profile look like it
+                # explicitly uses the DEFAULT compartment.
+                compartment_id = section_values.get("compartment-id", "").strip()
                 if compartment_id:
                     return compartment_id
         return ""
@@ -96,7 +101,7 @@ class OciInventoryProvider:
                 compute_client.list_instances(compartment_id=compartment_ocid).data,
             )
             for instance in instances:
-                private_ip, dns_name = self._instance_network_info(
+                private_ip, public_ip, dns_name = self._instance_network_info(
                     compute_client,
                     network_client,
                     compartment_ocid,
@@ -108,6 +113,7 @@ class OciInventoryProvider:
                         "state": str(instance.lifecycle_state),
                         "dns_name": dns_name,
                         "private_ip": private_ip,
+                        "public_ip": public_ip,
                     }
                 )
             return rows
@@ -172,8 +178,9 @@ class OciInventoryProvider:
         network_client: Any,
         compartment_ocid: str,
         instance_id: str,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str]:
         private_ip = ""
+        public_ip = ""
         dns_name = ""
         vnic_attachments = cast(
             list[Any],
@@ -185,8 +192,9 @@ class OciInventoryProvider:
         if vnic_attachments:
             vnic = network_client.get_vnic(vnic_attachments[0].vnic_id).data
             private_ip = vnic.private_ip or ""
+            public_ip = getattr(vnic, "public_ip", None) or ""
             dns_name = vnic.hostname_label or ""
-        return private_ip, dns_name
+        return private_ip, public_ip, dns_name
 
     def _rows_for_db_system(
         self,
@@ -208,6 +216,7 @@ class OciInventoryProvider:
         )
         rows: list[dict[str, str]] = []
         for index, db_node in enumerate(db_nodes):
+            private_ip, public_ip = self._db_node_network_info(network_client, db_node)
             rows.append(
                 {
                     "dbsystem": db_system.display_name if index == 0 else "",
@@ -215,14 +224,15 @@ class OciInventoryProvider:
                     "dbnode": db_node.hostname,
                     "state": str(db_node.lifecycle_state),
                     "dns_name": db_node.hostname,
-                    "private_ip": self._db_node_private_ip(network_client, db_node),
+                    "private_ip": private_ip,
+                    "public_ip": public_ip,
                 }
             )
         return rows
 
-    def _db_node_private_ip(self, network_client: Any, db_node: Any) -> str:
+    def _db_node_network_info(self, network_client: Any, db_node: Any) -> tuple[str, str]:
         vnic_id = getattr(db_node, "vnic_id", None)
         if not vnic_id:
-            return ""
+            return "", ""
         vnic = network_client.get_vnic(vnic_id).data
-        return vnic.private_ip or ""
+        return vnic.private_ip or "", getattr(vnic, "public_ip", None) or ""
