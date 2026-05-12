@@ -260,3 +260,91 @@ def test_db_node_network_info_includes_public_ip_when_set() -> None:
 
     assert private_ip == "10.0.1.10"
     assert public_ip == "203.0.113.20"
+
+
+def test_rows_for_exadb_vm_cluster_include_databases_and_node_ips() -> None:
+    provider = OciInventoryProvider()
+    cluster = SimpleNamespace(id="cluster-1", display_name="exadb-cluster-1")
+    db_homes = [
+        SimpleNamespace(id="home-1", db_version="23ai"),
+        SimpleNamespace(id="home-2", db_version="19c"),
+    ]
+    db_nodes = [
+        SimpleNamespace(
+            hostname="exadb-node-1",
+            lifecycle_state="AVAILABLE",
+            host_ip_id="private-ip-1",
+        ),
+        SimpleNamespace(
+            hostname="exadb-node-2",
+            lifecycle_state="AVAILABLE",
+            host_ip_id="private-ip-2",
+        ),
+    ]
+
+    def list_db_homes(**kwargs: Any) -> SimpleNamespace:
+        assert kwargs == {"compartment_id": "compartment", "vm_cluster_id": "cluster-1"}
+        return SimpleNamespace(data=db_homes)
+
+    def list_databases(**kwargs: Any) -> SimpleNamespace:
+        databases_by_home = {
+            "home-1": [SimpleNamespace(db_name="CDB1", db_unique_name="CDB1_ZRH")],
+            "home-2": [SimpleNamespace(db_name="CDB2", db_unique_name="CDB2_ZRH")],
+        }
+        return SimpleNamespace(data=databases_by_home[kwargs["db_home_id"]])
+
+    def list_db_nodes(**kwargs: Any) -> SimpleNamespace:
+        assert kwargs == {"compartment_id": "compartment", "vm_cluster_id": "cluster-1"}
+        return SimpleNamespace(data=db_nodes)
+
+    def get_private_ip(private_ip_id: str) -> SimpleNamespace:
+        private_ips = {
+            "private-ip-1": SimpleNamespace(ip_address="10.0.2.10"),
+            "private-ip-2": SimpleNamespace(ip_address="10.0.2.11"),
+        }
+        return SimpleNamespace(data=private_ips[private_ip_id])
+
+    def get_public_ip_by_private_ip_id(details: Any) -> SimpleNamespace:
+        assert details.private_ip_id in {"private-ip-1", "private-ip-2"}
+        if details.private_ip_id == "private-ip-2":
+            raise RuntimeError("No public IP assigned")
+        return SimpleNamespace(data=SimpleNamespace(ip_address="203.0.113.30"))
+
+    database_client = SimpleNamespace(
+        list_db_homes=list_db_homes,
+        list_databases=list_databases,
+        list_db_nodes=list_db_nodes,
+    )
+    network_client = SimpleNamespace(
+        get_private_ip=get_private_ip,
+        get_public_ip_by_private_ip_id=get_public_ip_by_private_ip_id,
+    )
+    rows_for_exadb_vm_cluster = cast(
+        Callable[[Any, Any, str, Any], list[dict[str, str]]],
+        getattr(cast(Any, provider), "_rows_for_exadb_vm_cluster"),
+    )
+
+    rows = rows_for_exadb_vm_cluster(database_client, network_client, "compartment", cluster)
+
+    assert rows == [
+        {
+            "cluster": "exadb-cluster-1",
+            "version": "23ai, 19c",
+            "databases": "CDB1, CDB2",
+            "dbnode": "exadb-node-1",
+            "state": "AVAILABLE",
+            "dns_name": "exadb-node-1",
+            "private_ip": "10.0.2.10",
+            "public_ip": "203.0.113.30",
+        },
+        {
+            "cluster": "",
+            "version": "",
+            "databases": "",
+            "dbnode": "exadb-node-2",
+            "state": "AVAILABLE",
+            "dns_name": "exadb-node-2",
+            "private_ip": "10.0.2.11",
+            "public_ip": "",
+        },
+    ]

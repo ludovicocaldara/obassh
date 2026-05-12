@@ -84,6 +84,7 @@ class ObasshApp(App[str | None]):
                 with TabPane("Targets", id="targets"):
                     yield DataTable(id="targets-compute-table")
                     yield DataTable(id="targets-db-table")
+                    yield DataTable(id="targets-exadb-table")
                     yield Static("No target selected", id="targets-selection")
                 with TabPane("Profiles", id="profiles"):
                     yield DataTable(id="profiles-table")
@@ -159,6 +160,13 @@ class ObasshApp(App[str | None]):
             self._state.selected_target_ip = row_values[5]
             self.query_one("#targets-selection", Static).update(
                 f"Selected DB node target: {row_values[2]} ({row_values[5]})"
+            )
+            return
+
+        if event.data_table.id == "targets-exadb-table":
+            self._state.selected_target_ip = row_values[5]
+            self.query_one("#targets-selection", Static).update(
+                f"Selected ExaDB node target: {row_values[2]} ({row_values[5]})"
             )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

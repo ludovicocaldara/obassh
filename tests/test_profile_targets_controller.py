@@ -48,12 +48,14 @@ class _TargetsApp:
     def __init__(self) -> None:
         self.compute_table = _FakeTable()
         self.db_table = _FakeTable()
+        self.exadb_table = _FakeTable()
         self.targets_selection = _FakeStatic()
 
     def query_one(self, selector: str, _widget_type: object) -> object:
         widgets: dict[str, object] = {
             "#targets-compute-table": self.compute_table,
             "#targets-db-table": self.db_table,
+            "#targets-exadb-table": self.exadb_table,
             "#targets-selection": self.targets_selection,
         }
         return widgets[selector]
@@ -88,6 +90,26 @@ class _TargetsInventory:
                 "dns_name": "db-node-1",
                 "private_ip": "10.0.1.10",
                 "public_ip": "203.0.113.20",
+            }
+        ]
+
+    def list_exadb_vm_cluster_nodes(
+        self,
+        profile_name: str,
+        compartment_ocid: str,
+    ) -> list[dict[str, str]]:
+        assert profile_name == "DEFAULT"
+        assert compartment_ocid == "profile-compartment"
+        return [
+            {
+                "cluster": "exadb-cluster-1",
+                "version": "23ai",
+                "databases": "CDB1, CDB2",
+                "dbnode": "exadb-node-1",
+                "state": "AVAILABLE",
+                "dns_name": "exadb-node-1",
+                "private_ip": "10.0.2.10",
+                "public_ip": "203.0.113.30",
             }
         ]
 
@@ -143,6 +165,17 @@ def test_load_target_tables_adds_public_ip_columns() -> None:
     assert app.db_table.columns == [
         ("DBSystem", "Version", "DBNode", "State", "DNS Name", "Private IP", "Public IP")
     ]
+    assert app.exadb_table.columns == [
+        (
+            "Cluster",
+            "Databases",
+            "DBNode",
+            "State",
+            "DNS Name",
+            "Private IP",
+            "Public IP",
+        )
+    ]
 
 
 def test_load_targets_for_profile_prints_public_ips_when_set() -> None:
@@ -172,4 +205,15 @@ def test_load_targets_for_profile_prints_public_ips_when_set() -> None:
             "203.0.113.20",
         )
     ]
-    assert app.targets_selection.value == "Loaded 1 compute nodes and 1 DB nodes"
+    assert app.exadb_table.rows == [
+        (
+            "exadb-cluster-1",
+            "CDB1, CDB2",
+            "exadb-node-1",
+            "AVAILABLE",
+            "exadb-node-1",
+            "10.0.2.10",
+            "203.0.113.30",
+        )
+    ]
+    assert app.targets_selection.value == "Loaded 1 compute nodes, 1 DB nodes, and 1 ExaDB nodes"

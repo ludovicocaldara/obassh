@@ -15,7 +15,7 @@ from obassh.domain.models import OciProfileRef
 
 
 class OciInventoryProvider:
-    """Read OCI profiles and discover compute / DB System node targets."""
+    """Read OCI profiles and discover compute / database node targets."""
 
     def __init__(self, config_path: str | None = None, cli_config_path: str | None = None) -> None:
         # .oci/config is used by OCI SDK to read profiles and create clients
@@ -172,6 +172,41 @@ class OciInventoryProvider:
         except Exception as exc:  # pragma: no cover
             raise OciApiError(f"Failed to list DB system nodes: {exc}") from exc
 
+    def list_exadb_vm_cluster_nodes(
+        self,
+        profile_name: str,
+        compartment_ocid: str,
+    ) -> list[dict[str, str]]:
+        """List ExaDB VM cluster nodes with databases hosted by each cluster.
+
+        ExaDB nodes are exposed through the Database service as DB nodes scoped by
+        the ExaDB VM cluster OCID. Database homes and databases are also scoped by
+        that VM cluster, so we collect all databases once per cluster and repeat
+        the cluster-level database summary on each node row.
+        """
+        try:
+            config = cast(dict[str, Any], oci.config.from_file(self._config_path, profile_name))
+            database_client = oci.database.DatabaseClient(config)
+            network_client = oci.core.VirtualNetworkClient(config)
+
+            rows: list[dict[str, str]] = []
+            clusters = cast(
+                list[Any],
+                database_client.list_exadb_vm_clusters(compartment_id=compartment_ocid).data,
+            )
+            for cluster in clusters:
+                rows.extend(
+                    self._rows_for_exadb_vm_cluster(
+                        database_client,
+                        network_client,
+                        compartment_ocid,
+                        cluster,
+                    )
+                )
+            return rows
+        except Exception as exc:  # pragma: no cover
+            raise OciApiError(f"Failed to list ExaDB VM cluster nodes: {exc}") from exc
+
     def _instance_network_info(
         self,
         compute_client: Any,
@@ -229,6 +264,102 @@ class OciInventoryProvider:
                 }
             )
         return rows
+
+    def _rows_for_exadb_vm_cluster(
+        self,
+        database_client: Any,
+        network_client: Any,
+        compartment_ocid: str,
+        cluster: Any,
+    ) -> list[dict[str, str]]:
+        db_homes = cast(
+            list[Any],
+            database_client.list_db_homes(
+                compartment_id=compartment_ocid,
+                vm_cluster_id=cluster.id,
+            ).data,
+        )
+        databases = self._database_names_for_homes(
+            database_client,
+            compartment_ocid,
+            db_homes,
+        )
+        db_nodes = cast(
+            list[Any],
+            database_client.list_db_nodes(
+                compartment_id=compartment_ocid,
+                vm_cluster_id=cluster.id,
+            ).data,
+        )
+
+        rows: list[dict[str, str]] = []
+        for index, db_node in enumerate(db_nodes):
+            private_ip, public_ip = self._exadb_vm_network_info(network_client, db_node)
+            rows.append(
+                {
+                    "cluster": cluster.display_name if index == 0 else "",
+                    "version": self._versions_for_db_homes(db_homes) if index == 0 else "",
+                    "databases": databases if index == 0 else "",
+                    "dbnode": db_node.hostname,
+                    "state": str(db_node.lifecycle_state),
+                    "dns_name": db_node.hostname,
+                    "private_ip": private_ip,
+                    "public_ip": public_ip,
+                }
+            )
+        return rows
+
+    def _database_names_for_homes(
+        self,
+        database_client: Any,
+        compartment_ocid: str,
+        db_homes: list[Any],
+    ) -> str:
+        database_names: list[str] = []
+        for db_home in db_homes:
+            databases = cast(
+                list[Any],
+                database_client.list_databases(
+                    compartment_id=compartment_ocid,
+                    db_home_id=db_home.id,
+                ).data,
+            )
+            for database in databases:
+                name = getattr(database, "db_name", None) or getattr(database, "db_unique_name", None)
+                if name:
+                    database_names.append(str(name))
+        return ", ".join(database_names)
+
+    def _versions_for_db_homes(self, db_homes: list[Any]) -> str:
+        versions = [str(db_home.db_version) for db_home in db_homes if getattr(db_home, "db_version", None)]
+        return ", ".join(dict.fromkeys(versions))
+
+    def _exadb_vm_network_info(self, network_client: Any, db_node: Any) -> tuple[str, str]:
+        """Resolve ExaDB VM network addresses from the VM host private IP.
+
+        ExaDB VM cluster nodes do not reliably expose the public IP through the
+        DB node VNIC payload. The Database service exposes the VM host private IP
+        OCID on the DB node; use that to resolve the private IP resource and then
+        ask VCN for the public IP assigned to that private IP.
+        """
+        host_ip_id = getattr(db_node, "host_ip_id", None)
+        if not host_ip_id:
+            return self._db_node_network_info(network_client, db_node)
+
+        private_ip = ""
+        public_ip = ""
+        private_ip_resource = network_client.get_private_ip(host_ip_id).data
+        private_ip = getattr(private_ip_resource, "ip_address", None) or ""
+
+        try:
+            public_ip_resource = network_client.get_public_ip_by_private_ip_id(
+                oci.core.models.GetPublicIpByPrivateIpIdDetails(private_ip_id=host_ip_id)
+            ).data
+            public_ip = getattr(public_ip_resource, "ip_address", None) or ""
+        except Exception:  # pragma: no cover - OCI returns 404 when no public IP is assigned
+            public_ip = ""
+
+        return private_ip, public_ip
 
     def _db_node_network_info(self, network_client: Any, db_node: Any) -> tuple[str, str]:
         vnic_id = getattr(db_node, "vnic_id", None)

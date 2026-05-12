@@ -88,6 +88,22 @@ class ProfileTargetsController:
             "Public IP",
         )
 
+        exadb_table = cast(
+            DataTable[str],
+            self._app.query_one("#targets-exadb-table", DataTable),
+        )
+        exadb_table.border_title = "ExaDB VM Cluster Nodes"
+        exadb_table.cursor_type = "row"
+        exadb_table.add_columns(
+            "Cluster",
+            "Databases",
+            "DBNode",
+            "State",
+            "DNS Name",
+            "Private IP",
+            "Public IP",
+        )
+
     def load_profiles(self) -> None:
         profiles_table = cast(
             DataTable[str],
@@ -122,8 +138,13 @@ class ProfileTargetsController:
             self._app.query_one("#targets-compute-table", DataTable),
         )
         db_table = cast(DataTable[str], self._app.query_one("#targets-db-table", DataTable))
+        exadb_table = cast(
+            DataTable[str],
+            self._app.query_one("#targets-exadb-table", DataTable),
+        )
         compute_table.clear(columns=False)
         db_table.clear(columns=False)
+        exadb_table.clear(columns=False)
 
         if not compartment_id:
             self._app.query_one("#targets-selection", Static).update(
@@ -134,6 +155,7 @@ class ProfileTargetsController:
         try:
             compute_nodes = self._inventory.list_compute_nodes(profile_name, compartment_id)
             db_nodes = self._inventory.list_db_system_nodes(profile_name, compartment_id)
+            exadb_nodes = self._inventory.list_exadb_vm_cluster_nodes(profile_name, compartment_id)
         except OciApiError as exc:  # pragma: no cover
             self._app.query_one("#targets-selection", Static).update(
                 f"Failed to load targets: {exc}"
@@ -158,7 +180,18 @@ class ProfileTargetsController:
                 row["private_ip"],
                 row.get("public_ip", ""),
             )
+        for row in exadb_nodes:
+            exadb_table.add_row(
+                row["cluster"],
+                row["databases"],
+                row["dbnode"],
+                row["state"],
+                row["dns_name"],
+                row["private_ip"],
+                row.get("public_ip", ""),
+            )
 
         self._app.query_one("#targets-selection", Static).update(
-            f"Loaded {len(compute_nodes)} compute nodes and {len(db_nodes)} DB nodes"
+            f"Loaded {len(compute_nodes)} compute nodes, "
+            f"{len(db_nodes)} DB nodes, and {len(exadb_nodes)} ExaDB nodes"
         )
